@@ -359,15 +359,20 @@ async function scan(evmAddr, solAddr) {
             tokens.push({ symbol: 'SOL', name: 'Solana', chain: 'Solana', balance: solBal, usd: solBal * price, color: '#9945FF', mint: null, decimals: 9, isNative: true });
         }
 
-        // SPL tokens
+        // SPL tokens — try all RPCs since some choke on heavy calls
         if (solRpc) try {
             log('Getting SPL token accounts...');
             document.getElementById('loadingText').textContent = 'Scanning tokens...';
-            const r = await fetchT(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTokenAccountsByOwner',
-                    params: [solAddr, { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' }, { encoding: 'jsonParsed' }] }) });
-            const d = await r.json();
-            const accts = d?.result?.value || [];
+            const splBody = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTokenAccountsByOwner',
+                params: [solAddr, { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' }, { encoding: 'jsonParsed' }] });
+            let accts = [];
+            for (const rpc of [solRpc, ...SOL_RPCS.filter(r => r !== solRpc)]) {
+                try {
+                    log('  SPL via ' + rpc.replace('https://','') + '...');
+                    const r = await fetchT(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: splBody }, 10000);
+                    if (r.ok) { const d = await r.json(); if (!d.error && d?.result?.value?.length) { accts = d.result.value; log('  ✅ ' + accts.length + ' accounts'); break; } }
+                } catch(e) { log('  timeout/error'); }
+            }
             log('SPL accounts: ' + accts.length);
 
             const mintMap = {};
