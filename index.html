@@ -175,8 +175,7 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
             <div class="config-row">
                 <div class="config-option active" onclick="pickToken(this,'SOL')"><div class="tn">SOL</div><div class="td">Solana</div></div>
                 <div class="config-option" onclick="pickToken(this,'USDC')"><div class="tn">USDC</div><div class="td">Stablecoin</div></div>
-                <div class="config-option" onclick="pickToken(this,'WOO')"><div class="tn">WOO</div><div class="td">WOO Network</div></div>
-                <div class="config-option" onclick="pickToken(this,'ORDER')"><div class="tn">ORDER</div><div class="td">Orderly</div></div>
+
             </div>
         </div>
 
@@ -523,8 +522,6 @@ const JUP_API = 'https://lite-api.jup.ag/swap/v1';
 const OUTPUT_MINTS = {
     SOL:   { mint: 'So11111111111111111111111111111111111111112', decimals: 9 },
     USDC:  { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6 },
-    WOO:   { mint: 'Dz8VutERqbHR2aFL5A3s1Ky4dG1unJT1jUFXXPaY9ytX', decimals: 6 },
-    ORDER: { mint: 'UPTx1d24aBWuRgwxVnFmX4gNraj3QGFzL3QqBgxtWQG', decimals: 6 },
 };
 
 async function jupQuote(inputMint, amount, decimals) {
