@@ -351,13 +351,17 @@ async function scan(evmAddr, solAddr) {
             const accts = d?.result?.value || [];
             log('SPL accounts: ' + accts.length);
 
-            const mintBals = [];
+            const mintMap = {};
             for (const a of accts) {
                 const info = a.account.data.parsed.info;
                 const amt = parseFloat(info.tokenAmount.uiAmountString || '0');
                 const dec = info.tokenAmount.decimals || 6;
-                if (amt > 0) mintBals.push({ mint: info.mint, amount: amt, decimals: dec });
+                if (amt > 0.000001) {
+                    if (mintMap[info.mint]) { mintMap[info.mint].amount += amt; }
+                    else { mintMap[info.mint] = { mint: info.mint, amount: amt, decimals: dec }; }
+                }
             }
+            const mintBals = Object.values(mintMap);
             log('Non-zero SPL tokens: ' + mintBals.length);
 
             // Token-2022
@@ -370,7 +374,11 @@ async function scan(evmAddr, solAddr) {
                     const info = a.account.data.parsed.info;
                     const amt = parseFloat(info.tokenAmount.uiAmountString || '0');
                     const dec = info.tokenAmount.decimals || 6;
-                    if (amt > 0) mintBals.push({ mint: info.mint, amount: amt, decimals: dec });
+                    if (amt > 0.000001) {
+                        const existing = mintBals.find(m => m.mint === info.mint);
+                        if (existing) { existing.amount += amt; }
+                        else { mintBals.push({ mint: info.mint, amount: amt, decimals: dec }); }
+                    }
                 }
                 log('After Token-2022: ' + mintBals.length + ' tokens');
             } catch(e) {}
