@@ -408,6 +408,8 @@ async function scan(evmAddr, solAddr) {
             } catch(e) {}
         }
 
+        // Fetch metadata and prices for discovered tokens
+        try {
             // Fetch Jupiter token list for names/symbols/logos
             log('Fetching token metadata...');
             document.getElementById('loadingText').textContent = 'Loading token names...';
