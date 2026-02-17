@@ -1,9 +1,18 @@
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // CORS set below after validation
   res.setHeader('Access-Control-Allow-Methods', 'GET');
   
   const addr = req.query.addr;
   if (!addr) return res.status(400).json({ error: 'addr required' });
+  // Validate Solana address: base58, 32-44 chars
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr))
+    return res.status(400).json({ error: 'invalid address' });
+  
+  // Restrict origin
+  const origin = req.headers.origin || '';
+  const allowed = ['https://arthurdex.com', 'https://woofi-dustsweep.vercel.app', 'http://localhost'];
+  const corsOrigin = allowed.find(a => origin.startsWith(a)) || allowed[0];
+  res.setHeader('Access-Control-Allow-Origin', corsOrigin);
 
   const RPC = 'https://api.mainnet-beta.solana.com';
   const headers = { 'Content-Type': 'application/json' };

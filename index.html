@@ -148,7 +148,7 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
             <p style="color:var(--text-dim);font-size:0.7rem;margin-top:12px;">Solana: Phantom · EVM: Rabby, MetaMask (not Phantom EVM)</p>
             <div class="features">
                 <div class="feature"><div class="feature-icon">🔍</div><h3>Deep Scan</h3><p>Finds all SPL tokens including pump.fun, Token-2022, and zero-value accounts.</p></div>
-                <div class="feature"><div class="feature-icon">⚡</div><h3>Real Swaps</h3><p>Jupiter routing for Solana, WOOFi sPMM for EVM. Best execution, 1% fee.</p></div>
+                <div class="feature"><div class="feature-icon">⚡</div><h3>Real Swaps</h3><p>Jupiter routing for Solana, WOOFi sPMM for EVM. Best execution. Free during beta.</p></div>
                 <div class="feature"><div class="feature-icon">🔒</div><h3>Non-Custodial</h3><p>Sign each transaction in your wallet. We never touch your keys.</p></div>
             </div>
         </div>
@@ -410,18 +410,7 @@ async function scan(evmAddr, solAddr) {
 
         // Fetch metadata and prices for discovered tokens
         try {
-            // Fetch Jupiter token list for names/symbols/logos
-            log('Fetching token metadata...');
-            document.getElementById('loadingText').textContent = 'Loading token names...';
             const jupTokens = {};
-            try {
-                const jtr = await fetch('https://cache.jup.ag/tokens');
-                if (jtr.ok) {
-                    const jtList = await jtr.json();
-                    for (const jt of jtList) { jupTokens[jt.address] = { symbol: jt.symbol, name: jt.name, img: jt.logoURI || null }; }
-                    log('Jupiter token list: ' + Object.keys(jupTokens).length + ' tokens');
-                }
-            } catch(e) { log('Jupiter token list failed: ' + e.message); }
 
             // DexScreener prices
             log('Fetching prices...');
@@ -665,7 +654,8 @@ async function signAndSendSolana(swapTransaction) {
     const { VersionedTransaction, Connection } = window._solWeb3;
     const tx = VersionedTransaction.deserialize(Uint8Array.from(atob(swapTransaction), c => c.charCodeAt(0)));
     const signed = await sol.signTransaction(tx);
-    const conn = new Connection(solRpc || 'https://solana-rpc.publicnode.com');
+    const sendRpc = (solRpc && solRpc !== 'proxy') ? solRpc : 'https://api.mainnet-beta.solana.com';
+    const conn = new Connection(sendRpc);
     return await conn.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 });
 }
 
@@ -687,8 +677,20 @@ async function woofiSwap(fromToken, toToken, amount, decimals) {
         await new Promise(r => setTimeout(r, 5000));
     }
 
+    // Query expected output for slippage protection
+    let minToAmount = '0';
+    try {
+        // querySwap(fromToken, toToken, fromAmount) → returns toAmount
+        const queryData = '0xe94803f4' + fromToken.slice(2).padStart(64, '0') + toToken.slice(2).padStart(64, '0') +
+            BigInt(fromAmount).toString(16).padStart(64, '0');
+        const queryResult = await eth.request({ method: 'eth_call', params: [{ to: WOOFI_ROUTER, data: queryData }, 'latest'] });
+        const expectedOut = BigInt(queryResult);
+        minToAmount = '0x' + (expectedOut * 98n / 100n).toString(16); // 2% slippage tolerance
+        sweepLog('Expected output: ' + (Number(expectedOut) / 1e6).toFixed(2) + ', min: ' + (Number(expectedOut * 98n / 100n) / 1e6).toFixed(2), 'info');
+    } catch(e) { log('querySwap failed, using 0 minToAmount'); }
+
     const swapData = '0x7dc20382' + fromToken.slice(2).padStart(64, '0') + toToken.slice(2).padStart(64, '0') +
-        BigInt(fromAmount).toString(16).padStart(64, '0') + '0'.repeat(64) +
+        BigInt(fromAmount).toString(16).padStart(64, '0') + BigInt(minToAmount).toString(16).padStart(64, '0') +
         userAddr.slice(2).padStart(64, '0') + '0'.repeat(64);
 
     return await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: WOOFI_ROUTER, data: swapData, value: '0x0' }] });
