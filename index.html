@@ -557,7 +557,7 @@ function render() {
 
     // Token list
     const filtered = tokens.map((t, i) => ({ ...t, idx: i })).filter(t =>
-        (t.usd <= thresh || t.unpriced || t.usd === 0) && (chainFilter === 'all' || t.chain === chainFilter));
+        chainFilter === 'all' || t.chain === chainFilter);
     let html = '';
     for (const t of filtered) {
         const sel = selected.has(t.idx);
