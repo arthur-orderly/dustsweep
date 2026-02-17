@@ -341,7 +341,7 @@ async function scan(evmAddr, solAddr) {
     if (solAddr) {
         log('--- Scanning Solana ---');
         document.getElementById('loadingText').textContent = 'Connecting to Solana...';
-        const SOL_RPCS = ['https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com', 'https://solana.drpc.org'];
+        const SOL_RPCS = ['https://api.mainnet-beta.solana.com', 'https://solana.drpc.org', 'https://solana-rpc.publicnode.com'];
         solRpc = null; let solBal = 0;
         for (const rpc of SOL_RPCS) {
             try {
