@@ -53,6 +53,48 @@ export default async function handler(req, res) {
       }
     }
 
+    // Fetch token metadata (names/symbols) from Jupiter token list API
+    const mints = Object.keys(mintMap);
+    if (mints.length > 0) {
+      try {
+        // Jupiter tokens API - batch lookup
+        const jupResp = await fetch('https://tokens.jup.ag/tokens?tags=verified,community,unknown&mint=' + mints.join(','));
+        if (jupResp.ok) {
+          const jupTokens = await jupResp.json();
+          for (const jt of jupTokens) {
+            if (mintMap[jt.address]) {
+              mintMap[jt.address].symbol = jt.symbol;
+              mintMap[jt.address].name = jt.name;
+              mintMap[jt.address].img = jt.logoURI || null;
+            }
+          }
+        }
+      } catch(e) {}
+
+      // Fallback: on-chain metadata for any still unnamed tokens
+      const unnamed = mints.filter(m => !mintMap[m].symbol);
+      if (unnamed.length > 0) {
+        try {
+          // Metaplex metadata PDA derivation not practical here, try DexScreener instead
+          const batches = [];
+          for (let i = 0; i < unnamed.length; i += 30) batches.push(unnamed.slice(i, i + 30));
+          for (const batch of batches) {
+            const dsResp = await fetch('https://api.dexscreener.com/tokens/v1/solana/' + batch.join(','));
+            if (dsResp.ok) {
+              const pairs = await dsResp.json();
+              if (Array.isArray(pairs)) for (const p of pairs) {
+                const base = p.baseToken || {};
+                if (base.address && mintMap[base.address] && !mintMap[base.address].symbol) {
+                  mintMap[base.address].symbol = base.symbol;
+                  mintMap[base.address].name = base.name;
+                }
+              }
+            }
+          }
+        } catch(e) {}
+      }
+    }
+
     res.status(200).json({
       solBalance: solBal,
       tokens: Object.values(mintMap),

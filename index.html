@@ -435,12 +435,11 @@ async function scan(evmAddr, solAddr) {
 
             for (const mb of mintBals) {
                 const p = prices[mb.mint];
-                const jt = jupTokens[mb.mint];
                 tokens.push({
-                    symbol: jt?.symbol || p?.symbol || mb.mint.slice(0, 6), name: jt?.name || p?.name || 'Unknown',
+                    symbol: mb.symbol || p?.symbol || mb.mint.slice(0, 6), name: mb.name || p?.name || 'Unknown',
                     chain: 'Solana', balance: mb.amount, usd: mb.amount * (p?.price || 0),
                     color: COLORS[tokens.length % COLORS.length], mint: mb.mint,
-                    img: jt?.img || p?.img || null, unpriced: !(p?.price), decimals: mb.decimals
+                    img: mb.img || p?.img || null, unpriced: !(p?.price), decimals: mb.decimals
                 });
             }
             log('Solana tokens added: ' + mintBals.length);
