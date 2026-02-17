@@ -472,10 +472,11 @@ async function scan(evmAddr, solAddr) {
 // === RENDER ===
 function render() {
     const thresh = parseFloat(document.getElementById('thresh').value);
-    const priced = tokens.filter(t => !t.unpriced && t.usd > 0);
+    const priced = tokens.filter(t => !t.unpriced && t.usd > 0 && !t.isNative);
     const total = priced.reduce((s, t) => s + t.usd, 0);
     const chainSet = new Set(tokens.map(t => t.chain));
-    document.getElementById('stTokens').textContent = tokens.length;
+    const sweepable = tokens.filter(t => !t.isNative && !t.unpriced && t.usd > 0).length;
+    document.getElementById('stTokens').textContent = sweepable > 0 ? sweepable : tokens.length;
     document.getElementById('stValue').textContent = '$' + total.toFixed(2);
     document.getElementById('stChains').textContent = chainSet.size;
 
@@ -508,7 +509,11 @@ function render() {
             <div class="val ${dim ? 'dim' : ''}">${dim ? 'No price' : '$' + t.usd.toFixed(2)}</div>
         </div>`;
     }
-    document.getElementById('dustList').innerHTML = html || '<div style="padding:20px;text-align:center;color:var(--text-dim);">No tokens under threshold</div>';
+    const noSweepable = tokens.length > 0 && tokens.every(t => t.isNative || t.unpriced || t.usd === 0);
+    const emptyMsg = noSweepable
+        ? '<div style="padding:20px;text-align:center;color:var(--text-dim);">Only native gas tokens found — nothing to sweep.<br><span style="font-size:0.7rem;">Try connecting a Solana wallet for SPL token scanning.</span></div>'
+        : '<div style="padding:20px;text-align:center;color:var(--text-dim);">No tokens under threshold</div>';
+    document.getElementById('dustList').innerHTML = html || emptyMsg;
 
     // Summary
     const selTokens = tokens.filter((_, i) => selected.has(i));
