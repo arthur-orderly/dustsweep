@@ -383,6 +383,18 @@ async function scan(evmAddr, solAddr) {
                 log('After Token-2022: ' + mintBals.length + ' tokens');
             } catch(e) {}
 
+            // Fetch Jupiter token list for names/symbols/logos
+            log('Fetching token metadata...');
+            const jupTokens = {};
+            try {
+                const jtr = await fetch('https://cache.jup.ag/tokens');
+                if (jtr.ok) {
+                    const jtList = await jtr.json();
+                    for (const jt of jtList) { jupTokens[jt.address] = { symbol: jt.symbol, name: jt.name, img: jt.logoURI || null }; }
+                    log('Jupiter token list: ' + Object.keys(jupTokens).length + ' tokens');
+                }
+            } catch(e) { log('Jupiter token list failed: ' + e.message); }
+
             // DexScreener prices
             log('Fetching prices from DexScreener...');
             const prices = {};
@@ -405,11 +417,12 @@ async function scan(evmAddr, solAddr) {
 
             for (const mb of mintBals) {
                 const p = prices[mb.mint];
+                const jt = jupTokens[mb.mint];
                 tokens.push({
-                    symbol: p?.symbol || mb.mint.slice(0, 6), name: p?.name || 'Unknown',
+                    symbol: jt?.symbol || p?.symbol || mb.mint.slice(0, 6), name: jt?.name || p?.name || 'Unknown',
                     chain: 'Solana', balance: mb.amount, usd: mb.amount * (p?.price || 0),
                     color: COLORS[tokens.length % COLORS.length], mint: mb.mint,
-                    img: p?.img || null, unpriced: !(p?.price), decimals: mb.decimals
+                    img: jt?.img || p?.img || null, unpriced: !(p?.price), decimals: mb.decimals
                 });
             }
             log('Solana tokens added: ' + mintBals.length);
