@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DustSweep — Clean Your Wallet Dust</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧹</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root {
+    --bg: #0a0a0f; --card: #13131a; --card-hover: #1a1a24; --border: #1e1e2a;
+    --text: #e4e4e7; --text-dim: #71717a; --accent: #8b5cf6; --accent-light: #a78bfa;
+    --accent-glow: rgba(139,92,246,0.15); --green: #22c55e; --green-dim: rgba(34,197,94,0.1);
+    --red: #ef4444; --orange: #f59e0b; --blue: #3b82f6;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Inter',-apple-system,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; height:200%;
+    background:radial-gradient(circle at 30% 20%,rgba(139,92,246,0.04) 0%,transparent 50%),
+    radial-gradient(circle at 70% 80%,rgba(59,130,246,0.03) 0%,transparent 50%); z-index:-1; }
+.header { display:flex; justify-content:space-between; align-items:center; padding:20px 40px;
+    border-bottom:1px solid var(--border); backdrop-filter:blur(20px); position:sticky; top:0; z-index:100;
+    background:rgba(10,10,15,0.8); }
+.logo { display:flex; align-items:center; gap:10px; font-size:1.4rem; font-weight:800; }
+.logo-icon { width:36px; height:36px; background:linear-gradient(135deg,var(--accent),#3b82f6);
+    border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1.2rem; }
+.logo span { color:var(--accent-light); }
+.powered-by { font-size:0.7rem; color:var(--text-dim); }
+.btn { background:var(--accent); color:white; border:none; padding:10px 24px; border-radius:12px;
+    font-size:0.85rem; font-weight:600; cursor:pointer; transition:all 0.2s; font-family:inherit; }
+.btn:hover { background:var(--accent-light); transform:translateY(-1px); }
+.btn.connected { background:var(--green-dim); color:var(--green); border:1px solid rgba(34,197,94,0.2); }
+.main { max-width:680px; margin:0 auto; padding:40px 20px; }
+.hero { text-align:center; margin-bottom:40px; }
+.hero h1 { font-size:2.8rem; font-weight:900; letter-spacing:-1.5px; margin-bottom:12px;
+    background:linear-gradient(135deg,#fff 30%,var(--accent-light)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+.hero p { font-size:1.05rem; color:var(--text-dim); max-width:480px; margin:0 auto; line-height:1.6; }
+.card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:20px; margin-bottom:20px; }
+.stats-bar { display:flex; gap:12px; margin-bottom:24px; }
+.stat-card { flex:1; background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; text-align:center; }
+.stat-value { font-size:1.5rem; font-weight:800; }
+.stat-value.purple { color:var(--accent-light); }
+.stat-value.green { color:var(--green); }
+.stat-value.orange { color:var(--orange); }
+.stat-label { font-size:0.7rem; color:var(--text-dim); margin-top:4px; text-transform:uppercase; letter-spacing:0.5px; }
+.chain-tabs { display:flex; gap:6px; margin-bottom:16px; overflow-x:auto; padding-bottom:4px; }
+.chain-tab { padding:8px 14px; border-radius:10px; font-size:0.75rem; font-weight:600; cursor:pointer;
+    border:1px solid var(--border); background:var(--card); color:var(--text-dim); white-space:nowrap;
+    transition:all 0.2s; font-family:inherit; }
+.chain-tab:hover { border-color:var(--accent); color:var(--text); }
+.chain-tab.active { background:var(--accent-glow); border-color:var(--accent); color:var(--accent-light); }
+.dust-list { max-height:500px; overflow-y:auto; }
+.dust-list::-webkit-scrollbar { width:4px; }
+.dust-list::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+.dust-item { display:flex; align-items:center; padding:12px 16px; border-bottom:1px solid rgba(30,30,42,0.5);
+    transition:background 0.15s; cursor:pointer; }
+.dust-item:hover { background:var(--card-hover); }
+.dust-item.selected { background:rgba(139,92,246,0.05); }
+.dust-item .check { width:18px; height:18px; border:2px solid var(--border); border-radius:5px;
+    margin-right:14px; display:flex; align-items:center; justify-content:center; font-size:0.6rem; flex-shrink:0; }
+.dust-item.selected .check { background:var(--accent); border-color:var(--accent); }
+.dust-item .icon { width:34px; height:34px; border-radius:50%; margin-right:12px; display:flex;
+    align-items:center; justify-content:center; font-size:0.7rem; font-weight:700; flex-shrink:0; overflow:hidden; }
+.dust-item .icon img { width:100%; height:100%; }
+.dust-item .info { flex:1; min-width:0; }
+.dust-item .name { font-size:0.85rem; font-weight:600; display:flex; align-items:center; gap:6px; }
+.dust-item .name .badge { font-size:0.55rem; padding:2px 5px; border-radius:4px; background:rgba(59,130,246,0.1); color:var(--blue); }
+.dust-item .bal { font-size:0.7rem; color:var(--text-dim); margin-top:2px; }
+.dust-item .val { text-align:right; flex-shrink:0; font-size:0.85rem; font-weight:600; }
+.dust-item .val.dim { color:var(--text-dim); font-size:0.7rem; }
+.dust-item .mint { font-size:0.6rem; color:var(--text-dim); word-break:break-all; }
+.config-row { display:flex; gap:12px; margin-bottom:12px; }
+.config-option { flex:1; padding:14px; border:1px solid var(--border); border-radius:12px; cursor:pointer;
+    text-align:center; transition:all 0.2s; background:var(--bg); font-family:inherit; }
+.config-option:hover { border-color:var(--accent); }
+.config-option.active { border-color:var(--accent); background:var(--accent-glow); }
+.config-option .tn { font-size:0.85rem; font-weight:700; }
+.config-option .td { font-size:0.65rem; color:var(--text-dim); }
+.summary-row { display:flex; justify-content:space-between; padding:6px 0; font-size:0.85rem; }
+.summary-row .l { color:var(--text-dim); } .summary-row .v { font-weight:600; }
+.summary-row.total { border-top:1px solid var(--border); margin-top:8px; padding-top:12px; font-size:1rem; }
+.summary-row.total .v { color:var(--green); font-weight:800; }
+.summary-row .fee { color:var(--orange); }
+.sweep-btn { width:100%; padding:18px; border:none; border-radius:14px; font-size:1.1rem; font-weight:700;
+    cursor:pointer; font-family:inherit; background:linear-gradient(135deg,var(--accent),#6366f1); color:white;
+    transition:all 0.2s; }
+.sweep-btn:hover { transform:translateY(-2px); box-shadow:0 8px 30px rgba(139,92,246,0.3); }
+.sweep-btn:disabled { opacity:0.5; cursor:not-allowed; transform:none; box-shadow:none; }
+.sweep-btn .sub { font-size:0.7rem; font-weight:400; opacity:0.7; display:block; margin-top:4px; }
+.progress-bar { width:100%; height:4px; background:var(--border); border-radius:2px; margin-top:12px; overflow:hidden; display:none; }
+.progress-bar .fill { height:100%; background:linear-gradient(90deg,var(--accent),var(--green)); border-radius:2px; transition:width 0.3s; width:0%; }
+.sweep-log { margin-top:12px; max-height:200px; overflow-y:auto; font-size:0.75rem; line-height:1.8; }
+.sweep-log .entry { padding:2px 0; display:flex; align-items:center; gap:8px; }
+.sweep-log .entry.ok { color:var(--green); }
+.sweep-log .entry.fail { color:var(--red); }
+.sweep-log .entry.info { color:var(--text-dim); }
+#debugLog { font-family:monospace; font-size:0.65rem; color:var(--text-dim); background:var(--bg);
+    border:1px solid var(--border); border-radius:8px; padding:10px; max-height:200px; overflow-y:auto;
+    margin-top:16px; line-height:1.6; word-break:break-all; display:none; }
+.features { display:flex; gap:16px; margin-top:40px; }
+.feature { flex:1; background:var(--card); border:1px solid var(--border); border-radius:14px; padding:20px; }
+.feature-icon { font-size:1.5rem; margin-bottom:10px; }
+.feature h3 { font-size:0.85rem; margin-bottom:6px; }
+.feature p { font-size:0.75rem; color:var(--text-dim); line-height:1.5; }
+.footer { text-align:center; padding:40px; color:var(--text-dim); font-size:0.7rem; border-top:1px solid var(--border); margin-top:60px; }
+.footer a { color:var(--accent-light); text-decoration:none; }
+.sel-bar { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border); }
+.sel-bar label { display:flex; align-items:center; gap:8px; font-size:0.8rem; color:var(--text-dim); cursor:pointer; }
+.threshold select { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:4px 8px;
+    border-radius:6px; font-size:0.75rem; font-family:inherit; }
+.connect-btns { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+.connect-btns .btn { padding:14px 28px; font-size:1rem; }
+.connect-btns .btn.sol { background:#9945FF; }
+.connect-btns .btn.sol:hover { background:#b06aff; }
+@media (max-width:640px) { .header{padding:16px 20px;} .hero h1{font-size:2rem;} .stats-bar,.features{flex-direction:column;} .connect-btns{flex-direction:column;} }
+</style>
+</head>
+<body>
+<header class="header">
+    <div class="logo"><div class="logo-icon">🧹</div>Dust<span>Sweep</span></div>
+    <div style="display:flex;align-items:center;gap:16px;">
+        <div class="powered-by">Solana via Jupiter · EVM via WOOFi</div>
+        <button class="btn" id="disconnectBtn" onclick="disconnect()" style="display:none;background:transparent;border:1px solid var(--border);color:var(--text-dim);padding:8px 14px;font-size:0.75rem;">Disconnect</button>
+        <button class="btn" id="connectBtn" onclick="connectSolana()">Connect Wallet</button>
+    </div>
+</header>
+<main class="main">
+    <div class="hero">
+        <h1>Sweep Your Dust</h1>
+        <p>Find forgotten tokens in your wallet. Swap them into SOL or USDC in one click.</p>
+    </div>
+
+    <div id="preConnect">
+        <div style="text-align:center;padding:40px;">
+            <div style="width:80px;height:80px;background:var(--accent-glow);border:2px solid rgba(139,92,246,0.2);border-radius:24px;display:flex;align-items:center;justify-content:center;font-size:2rem;margin:0 auto 20px;">👛</div>
+            <h2 style="font-size:1.3rem;margin-bottom:8px;">Connect your wallet to start</h2>
+            <p style="color:var(--text-dim);font-size:0.9rem;margin-bottom:24px;">We'll scan for small token balances and help you clean them up</p>
+            <div class="connect-btns">
+                <button class="btn sol" onclick="connectSolana()">👻 Solana</button>
+                <button class="btn" onclick="connectEVM()">🦊 EVM</button>
+            </div>
+            <p style="color:var(--text-dim);font-size:0.7rem;margin-top:12px;">Solana: Phantom · EVM: Rabby, MetaMask (not Phantom EVM)</p>
+            <div class="features">
+                <div class="feature"><div class="feature-icon">🔍</div><h3>Deep Scan</h3><p>Finds all SPL tokens including pump.fun, Token-2022, and zero-value accounts.</p></div>
+                <div class="feature"><div class="feature-icon">⚡</div><h3>Real Swaps</h3><p>Jupiter routing for Solana, WOOFi sPMM for EVM. Best execution, 1% fee.</p></div>
+                <div class="feature"><div class="feature-icon">🔒</div><h3>Non-Custodial</h3><p>Sign each transaction in your wallet. We never touch your keys.</p></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="debugLog"></div>
+
+    <div id="postConnect" style="display:none;">
+        <div class="stats-bar" id="statsBar" style="display:none;margin-top:20px;">
+            <div class="stat-card"><div class="stat-value purple" id="stTokens">0</div><div class="stat-label">Tokens Found</div></div>
+            <div class="stat-card"><div class="stat-value green" id="stValue">$0</div><div class="stat-label">Recoverable</div></div>
+            <div class="stat-card"><div class="stat-value orange" id="stChains">0</div><div class="stat-label">Chains</div></div>
+        </div>
+
+        <div class="chain-tabs" id="chainTabs" style="display:none;"></div>
+
+        <div class="card" id="tokenPanel" style="display:none;padding:0;">
+            <div class="sel-bar">
+                <label><input type="checkbox" id="selAll" checked onchange="toggleAll()"> Select All</label>
+                <div class="threshold">Show under <select id="thresh" onchange="render()">
+                    <option value="1">$1</option><option value="5">$5</option><option value="10">$10</option>
+                    <option value="20" selected>$20</option><option value="50">$50</option><option value="100">$100</option>
+                </select></div>
+            </div>
+            <div class="dust-list" id="dustList"></div>
+        </div>
+
+        <div class="card" id="configPanel" style="display:none;">
+            <div style="font-size:0.8rem;font-weight:600;color:var(--text-dim);margin-bottom:14px;text-transform:uppercase;">Sweep into</div>
+            <div class="config-row">
+                <div class="config-option active" onclick="pickToken(this,'SOL')"><div class="tn">SOL</div><div class="td">Solana</div></div>
+                <div class="config-option" onclick="pickToken(this,'USDC')"><div class="tn">USDC</div><div class="td">Stablecoin</div></div>
+                <div class="config-option" onclick="pickToken(this,'WOO')"><div class="tn">WOO</div><div class="td">WOO Network</div></div>
+                <div class="config-option" onclick="pickToken(this,'ORDER')"><div class="tn">ORDER</div><div class="td">Orderly</div></div>
+            </div>
+        </div>
+
+        <div class="card" id="summaryPanel" style="display:none;">
+            <div class="summary-row"><span class="l">Selected tokens</span><span class="v" id="smTok">0</span></div>
+            <div class="summary-row"><span class="l">Gross value</span><span class="v" id="smGross">$0</span></div>
+            <div class="summary-row"><span class="l">Protocol fee</span><span class="v" id="smFee" style="color:var(--green);">Free (beta)</span></div>
+            <div class="summary-row total"><span class="l">You receive</span><span class="v" id="smNet">$0</span></div>
+        </div>
+
+        <button class="sweep-btn" id="sweepBtn" style="display:none;" onclick="doSweep()" disabled>
+            🧹 Sweep Selected<span class="sub">Sign each swap in your wallet</span>
+        </button>
+        <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill"></div></div>
+        <div class="sweep-log" id="sweepLog"></div>
+    </div>
+</main>
+<footer class="footer">DustSweep — Solana swaps via <a href="https://jup.ag" target="_blank">Jupiter</a> · EVM swaps via <a href="https://woofi.com" target="_blank">WOOFi</a> · Free during beta</footer>
+
+<script>
+// === STATE ===
+const COLORS = ['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD','#98D8C8','#F7DC6F','#BB8FCE','#85C1E9','#F0B27A','#82E0AA'];
+let tokens = [], selected = new Set(), destToken = 'SOL', chainFilter = 'all', solRpc = null;
+let connectedSolAddr = null, connectedEvmAddr = null;
+
+// === DEBUG ===
+const DEBUG = window.location.search.includes('debug');
+if (DEBUG) document.getElementById('debugLog').style.display = 'block';
+function log(msg) { console.log(msg); if (DEBUG) { const el = document.getElementById('debugLog'); if (el) { el.innerHTML += msg + '\n'; el.scrollTop = el.scrollHeight; } } }
+
+// === SWEEP LOG (always visible during sweep) ===
+function sweepLog(msg, type = 'info') {
+    const el = document.getElementById('sweepLog');
+    el.innerHTML += `<div class="entry ${type}">${type === 'ok' ? '✅' : type === 'fail' ? '❌' : '⏳'} ${msg}</div>`;
+    el.scrollTop = el.scrollHeight;
+}
+
+// === UTILS ===
+function withTimeout(promise, ms, label) {
+    return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error(label + ' timed out')), ms))]);
+}
+function showPost(display) {
+    document.getElementById('connectBtn').textContent = display;
+    document.getElementById('connectBtn').classList.add('connected');
+    document.getElementById('preConnect').style.display = 'none';
+    document.getElementById('postConnect').style.display = 'block';
+}
+
+// === DISCONNECT ===
+async function disconnect() {
+    try { const sol = window?.phantom?.solana || window?.solana; if (sol) await sol.disconnect(); } catch(e) {}
+    connectedSolAddr = null; connectedEvmAddr = null;
+    tokens = []; selected.clear();
+    document.getElementById('connectBtn').textContent = 'Connect Wallet';
+    document.getElementById('connectBtn').classList.remove('connected');
+    document.getElementById('disconnectBtn').style.display = 'none';
+    document.getElementById('preConnect').style.display = 'block';
+    document.getElementById('postConnect').style.display = 'none';
+    document.getElementById('sweepLog').innerHTML = '';
+    log('Disconnected');
+}
+
+// === WALLET CONNECT ===
+async function connectSolana() {
+    log('Connecting Solana wallet...');
+    const sol = window?.phantom?.solana || window?.solana;
+    if (!sol) { alert('No Solana wallet found. Install Phantom.'); return; }
+
+    let addr = null;
+    if (sol.isConnected && sol.publicKey) {
+        addr = sol.publicKey.toString();
+        log('✅ Already connected: ' + addr);
+    } else {
+        try {
+            const resp = await withTimeout(sol.connect({ onlyIfTrusted: true }), 5000, 'Silent');
+            addr = resp.publicKey.toString();
+            log('✅ Silent: ' + addr);
+        } catch(e) {
+            try {
+                log('Opening Phantom popup...');
+                const resp = await withTimeout(sol.connect(), 30000, 'Phantom');
+                addr = resp.publicKey.toString();
+                log('✅ Connected: ' + addr);
+            } catch(e2) {
+                alert('Phantom connect failed. Try clicking the Phantom icon first.');
+                return;
+            }
+        }
+    }
+    connectedSolAddr = addr;
+    document.getElementById('disconnectBtn').style.display = 'inline-block';
+    showPost(addr.slice(0, 4) + '...' + addr.slice(-4));
+    await scan(null, addr);
+}
+
+async function connectEVM() {
+    log('Connecting EVM wallet...');
+
+    // Find a non-Phantom EVM provider (Rabby, MetaMask, etc.)
+    let eth = null;
+
+    // Check for multiple providers (EIP-5749)
+    if (window.ethereum?.providers?.length) {
+        eth = window.ethereum.providers.find(p => p.isRabby) ||
+              window.ethereum.providers.find(p => p.isMetaMask && !p.isPhantom) ||
+              window.ethereum.providers.find(p => !p.isPhantom);
+        log('Found ' + window.ethereum.providers.length + ' EVM providers');
+    }
+    // Direct checks
+    if (!eth && window.rabby) { eth = window.rabby; log('Using window.rabby'); }
+    if (!eth && window.ethereum && !window.ethereum.isPhantom) { eth = window.ethereum; log('Using window.ethereum (non-Phantom)'); }
+
+    if (!eth) {
+        alert('No EVM wallet found.\n\nPhantom\'s EVM mode doesn\'t work with Solana-only accounts.\n\nInstall Rabby (rabby.io) or MetaMask for EVM chains.');
+        return;
+    }
+
+    try {
+        log('Requesting accounts from ' + (eth.isRabby ? 'Rabby' : eth.isMetaMask ? 'MetaMask' : 'EVM wallet') + '...');
+        const accts = await withTimeout(eth.request({ method: 'eth_requestAccounts' }), 30000, 'EVM');
+        const addr = accts[0];
+        log('✅ EVM: ' + addr);
+        connectedEvmAddr = addr;
+        document.getElementById('disconnectBtn').style.display = 'inline-block';
+        showPost(addr.slice(0, 6) + '...' + addr.slice(-4));
+        await scan(addr, null);
+    } catch(e) { alert('EVM connect failed: ' + e.message); }
+}
+
+// === SCAN ===
+async function scan(evmAddr, solAddr) {
+    tokens = []; selected.clear();
+
+    // === SOLANA ===
+    if (solAddr) {
+        log('--- Scanning Solana ---');
+        const SOL_RPCS = ['https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com', 'https://solana.drpc.org'];
+        solRpc = null;
+        for (const rpc of SOL_RPCS) {
+            try {
+                log('Trying RPC: ' + rpc.replace('https://', '') + '...');
+                const r = await fetch(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'getHealth' }) });
+                if (r.ok) { const d = await r.json(); if (!d.error) { solRpc = rpc; log('✅ Using ' + rpc.replace('https://', '')); break; } }
+            } catch(e) {}
+        }
+        if (!solRpc) { log('❌ All Solana RPCs failed'); }
+
+        // Native SOL
+        if (solRpc) try {
+            log('Getting SOL balance...');
+            const r = await fetch(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [solAddr] }) });
+            const d = await r.json();
+            const bal = (d?.result?.value || 0) / 1e9;
+            log('SOL balance: ' + bal.toFixed(4));
+            if (bal > 0.001) {
+                let price = 85;
+                try { const pr = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+                    const pd = await pr.json(); price = pd?.solana?.usd || 85; } catch(e) {}
+                tokens.push({ symbol: 'SOL', name: 'Solana', chain: 'Solana', balance: bal, usd: bal * price, color: '#9945FF', mint: null, decimals: 9, isNative: true });
+                log('SOL: $' + (bal * price).toFixed(2));
+            }
+        } catch(e) { log('SOL error: ' + e.message); }
+
+        // SPL tokens
+        if (solRpc) try {
+            log('Getting SPL token accounts...');
+            const r = await fetch(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTokenAccountsByOwner',
+                    params: [solAddr, { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' }, { encoding: 'jsonParsed' }] }) });
+            const d = await r.json();
+            const accts = d?.result?.value || [];
+            log('SPL accounts: ' + accts.length);
+
+            const mintBals = [];
+            for (const a of accts) {
+                const info = a.account.data.parsed.info;
+                const amt = parseFloat(info.tokenAmount.uiAmountString || '0');
+                const dec = info.tokenAmount.decimals || 6;
+                if (amt > 0) mintBals.push({ mint: info.mint, amount: amt, decimals: dec });
+            }
+            log('Non-zero SPL tokens: ' + mintBals.length);
+
+            // Token-2022
+            try {
+                const r2 = await fetch(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'getTokenAccountsByOwner',
+                        params: [solAddr, { programId: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' }, { encoding: 'jsonParsed' }] }) });
+                const d2 = await r2.json();
+                for (const a of (d2?.result?.value || [])) {
+                    const info = a.account.data.parsed.info;
+                    const amt = parseFloat(info.tokenAmount.uiAmountString || '0');
+                    const dec = info.tokenAmount.decimals || 6;
+                    if (amt > 0) mintBals.push({ mint: info.mint, amount: amt, decimals: dec });
+                }
+                log('After Token-2022: ' + mintBals.length + ' tokens');
+            } catch(e) {}
+
+            // DexScreener prices
+            log('Fetching prices from DexScreener...');
+            const prices = {};
+            for (let i = 0; i < mintBals.length; i += 30) {
+                const batch = mintBals.slice(i, i + 30);
+                try {
+                    const pr = await fetch('https://api.dexscreener.com/tokens/v1/solana/' + batch.map(m => m.mint).join(','));
+                    if (pr.ok) {
+                        const pairs = await pr.json();
+                        if (Array.isArray(pairs)) for (const p of pairs) {
+                            const base = p.baseToken || {};
+                            if (base.address && !prices[base.address])
+                                prices[base.address] = { symbol: base.symbol, name: base.name, price: parseFloat(p.priceUsd || '0'), img: p.info?.imageUrl || null };
+                        }
+                    }
+                } catch(e) {}
+                if (i + 30 < mintBals.length) await new Promise(r => setTimeout(r, 500));
+            }
+            log('DexScreener prices found: ' + Object.keys(prices).length);
+
+            for (const mb of mintBals) {
+                const p = prices[mb.mint];
+                tokens.push({
+                    symbol: p?.symbol || mb.mint.slice(0, 6), name: p?.name || 'Unknown',
+                    chain: 'Solana', balance: mb.amount, usd: mb.amount * (p?.price || 0),
+                    color: COLORS[tokens.length % COLORS.length], mint: mb.mint,
+                    img: p?.img || null, unpriced: !(p?.price), decimals: mb.decimals
+                });
+            }
+            log('Solana tokens added: ' + mintBals.length);
+        } catch(e) { log('SPL scan error: ' + e.message); }
+    }
+
+    // === EVM ===
+    if (evmAddr) {
+        log('--- Scanning EVM ---');
+        const chains = [
+            { name: 'Ethereum', rpcs: ['https://eth.llamarpc.com', 'https://1rpc.io/eth', 'https://ethereum-rpc.publicnode.com'], sym: 'ETH', cgId: 'ethereum' },
+            { name: 'Arbitrum', rpcs: ['https://arb1.arbitrum.io/rpc', 'https://1rpc.io/arb', 'https://arbitrum-one-rpc.publicnode.com'], sym: 'ETH', cgId: 'ethereum' },
+            { name: 'Base', rpcs: ['https://1rpc.io/base', 'https://base-rpc.publicnode.com', 'https://mainnet.base.org'], sym: 'ETH', cgId: 'ethereum' },
+            { name: 'Optimism', rpcs: ['https://mainnet.optimism.io', 'https://1rpc.io/op', 'https://optimism-rpc.publicnode.com'], sym: 'ETH', cgId: 'ethereum' },
+            { name: 'Polygon', rpcs: ['https://polygon-rpc.com', 'https://1rpc.io/matic', 'https://polygon-bor-rpc.publicnode.com'], sym: 'POL', cgId: 'matic-network' },
+            { name: 'BSC', rpcs: ['https://bsc-dataseed.binance.org', 'https://1rpc.io/bnb', 'https://bsc-rpc.publicnode.com'], sym: 'BNB', cgId: 'binancecoin' },
+        ];
+        let cgPrices = {};
+        try {
+            const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum,matic-network,binancecoin&vs_currencies=usd');
+            const d = await r.json();
+            cgPrices = { ethereum: d?.ethereum?.usd || 2700, 'matic-network': d?.['matic-network']?.usd || 0.4, binancecoin: d?.binancecoin?.usd || 300 };
+        } catch(e) { cgPrices = { ethereum: 2700, 'matic-network': 0.4, binancecoin: 300 }; }
+
+        for (const c of chains) {
+            for (const rpc of c.rpcs) {
+                try {
+                    const r = await fetch(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [evmAddr, 'latest'] }) });
+                    if (!r.ok) continue;
+                    const d = await r.json(); if (d.error) continue;
+                    const bal = parseInt(d.result, 16) / 1e18;
+                    const price = cgPrices[c.cgId] || 0;
+                    const usd = bal * price;
+                    if (usd > 0.01) {
+                        tokens.push({ symbol: c.sym, name: c.sym + ' on ' + c.name, chain: c.name, balance: bal, usd, color: '#627EEA', mint: null, isNative: true });
+                        log(c.name + ': ' + bal.toFixed(4) + ' ' + c.sym + ' = $' + usd.toFixed(2));
+                    } else { log(c.name + ': ~$0'); }
+                    break;
+                } catch(e) { continue; }
+            }
+        }
+    }
+
+    // Sort by value, auto-select priced tokens under threshold
+    tokens.sort((a, b) => b.usd - a.usd);
+    log('--- Total: ' + tokens.length + ' tokens ---');
+    const thresh = parseFloat(document.getElementById('thresh').value);
+    tokens.forEach((t, i) => { if (t.usd > 0 && t.usd <= thresh && !t.unpriced && !t.isNative) selected.add(i); });
+
+    document.getElementById('statsBar').style.display = 'flex';
+    document.getElementById('chainTabs').style.display = 'flex';
+    document.getElementById('tokenPanel').style.display = 'block';
+    document.getElementById('configPanel').style.display = 'block';
+    document.getElementById('summaryPanel').style.display = 'block';
+    document.getElementById('sweepBtn').style.display = 'block';
+    render();
+}
+
+// === RENDER ===
+function render() {
+    const thresh = parseFloat(document.getElementById('thresh').value);
+    const priced = tokens.filter(t => !t.unpriced && t.usd > 0);
+    const total = priced.reduce((s, t) => s + t.usd, 0);
+    const chainSet = new Set(tokens.map(t => t.chain));
+    document.getElementById('stTokens').textContent = tokens.length;
+    document.getElementById('stValue').textContent = '$' + total.toFixed(2);
+    document.getElementById('stChains').textContent = chainSet.size;
+
+    // Chain tabs
+    const chainCounts = {};
+    tokens.forEach(t => { if (!chainCounts[t.chain]) chainCounts[t.chain] = { n: 0 }; chainCounts[t.chain].n++; });
+    let tabs = `<div class="chain-tab ${chainFilter === 'all' ? 'active' : ''}" onclick="chainFilter='all';render()">All (${tokens.length})</div>`;
+    for (const [c, d] of Object.entries(chainCounts))
+        tabs += `<div class="chain-tab ${chainFilter === c ? 'active' : ''}" onclick="chainFilter='${c}';render()">${c} (${d.n})</div>`;
+    document.getElementById('chainTabs').innerHTML = tabs;
+
+    // Token list
+    const filtered = tokens.map((t, i) => ({ ...t, idx: i })).filter(t =>
+        (t.usd <= thresh || t.unpriced || t.usd === 0) && (chainFilter === 'all' || t.chain === chainFilter));
+    let html = '';
+    for (const t of filtered) {
+        const sel = selected.has(t.idx);
+        const dim = t.unpriced || t.usd === 0 || t.isNative;
+        const balStr = t.balance.toLocaleString(undefined, { maximumFractionDigits: 4 });
+        const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const safeSymbol = esc(t.symbol); const safeName = esc(t.name || '');
+        const iconHtml = t.img ? `<img src="${esc(t.img)}" onerror="this.outerHTML='${safeSymbol.slice(0, 2)}'">` : safeSymbol.slice(0, 2);
+        html += `<div class="dust-item ${sel ? 'selected' : ''}" onclick="${t.isNative ? '' : 'toggleSel('+t.idx+')'}" style="${dim ? 'opacity:0.45' : ''}${t.isNative ? ';cursor:default' : ''}">
+            <div class="check">${sel ? '✓' : ''}</div>
+            <div class="icon" style="background:${t.color}20;color:${t.color};">${iconHtml}</div>
+            <div class="info">
+                <div class="name">${safeSymbol} <span class="badge">${t.chain}</span>${t.isNative ? ' <span class="badge" style="background:rgba(113,113,122,0.15);color:var(--text-dim);">gas · not sweepable</span>' : ''}</div>
+                <div class="bal">${balStr} ${safeSymbol}</div>
+            </div>
+            <div class="val ${dim ? 'dim' : ''}">${dim ? 'No price' : '$' + t.usd.toFixed(2)}</div>
+        </div>`;
+    }
+    document.getElementById('dustList').innerHTML = html || '<div style="padding:20px;text-align:center;color:var(--text-dim);">No tokens under threshold</div>';
+
+    // Summary
+    const selTokens = tokens.filter((_, i) => selected.has(i));
+    const gross = selTokens.reduce((s, t) => s + t.usd, 0);
+    const fee = 0; // Free during beta
+    document.getElementById('smTok').textContent = selTokens.length;
+    document.getElementById('smGross').textContent = '$' + gross.toFixed(2);
+    document.getElementById('smFee').textContent = 'Free (beta)';
+    document.getElementById('smNet').textContent = '~$' + (gross - fee).toFixed(2) + ' ' + destToken;
+    document.getElementById('sweepBtn').disabled = selTokens.length === 0;
+}
+
+function toggleSel(i) { if (selected.has(i)) selected.delete(i); else selected.add(i); render(); }
+function toggleAll() { const c = document.getElementById('selAll').checked; if (c) tokens.forEach((t, i) => { if (!t.unpriced && t.usd > 0 && !t.isNative) selected.add(i); }); else selected.clear(); render(); }
+function pickToken(el, t) { document.querySelectorAll('.config-option').forEach(o => o.classList.remove('active')); el.classList.add('active'); destToken = t; render(); }
+
+// === JUPITER SWAP (Solana) ===
+const JUP_API = 'https://lite-api.jup.ag/swap/v1';
+const OUTPUT_MINTS = {
+    SOL:   { mint: 'So11111111111111111111111111111111111111112', decimals: 9 },
+    USDC:  { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6 },
+    WOO:   { mint: 'Dz8VutERqbHR2aFL5A3s1Ky4dG1unJT1jUFXXPaY9ytX', decimals: 6 },
+    ORDER: { mint: 'UPTx1d24aBWuRgwxVnFmX4gNraj3QGFzL3QqBgxtWQG', decimals: 6 },
+};
+
+async function jupQuote(inputMint, amount, decimals) {
+    const rawAmount = Math.floor(amount * (10 ** decimals));
+    if (rawAmount <= 0) throw new Error('Amount too small');
+    const output = OUTPUT_MINTS[destToken] || OUTPUT_MINTS.SOL;
+    const url = `${JUP_API}/quote?inputMint=${inputMint}&outputMint=${output.mint}&amount=${rawAmount}&slippageBps=300&restrictIntermediateTokens=true`;
+    const r = await fetch(url);
+    if (!r.ok) { const t = await r.text(); throw new Error(r.status === 400 ? 'No route found' : 'Quote error: ' + t); }
+    return await r.json();
+}
+
+async function jupSwapTx(quoteResponse, userPubkey) {
+    const r = await fetch(`${JUP_API}/swap`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            quoteResponse, userPublicKey: userPubkey,
+            dynamicComputeUnitLimit: true, dynamicSlippage: true,
+            prioritizationFeeLamports: { priorityLevelWithMaxLamports: { maxLamports: 1000000, priorityLevel: 'medium' } }
+        })
+    });
+    if (!r.ok) throw new Error('Swap build failed: ' + await r.text());
+    return await r.json();
+}
+
+async function signAndSendSolana(swapTransaction) {
+    const sol = window?.phantom?.solana || window?.solana;
+    if (!window._solWeb3) {
+        log('Loading Solana web3.js...');
+        await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://unpkg.com/@solana/web3.js@1.95.8/lib/index.iife.min.js';
+            s.onload = resolve; s.onerror = reject;
+            document.head.appendChild(s);
+        });
+        window._solWeb3 = solanaWeb3;
+    }
+    const { VersionedTransaction, Connection } = window._solWeb3;
+    const tx = VersionedTransaction.deserialize(Uint8Array.from(atob(swapTransaction), c => c.charCodeAt(0)));
+    const signed = await sol.signTransaction(tx);
+    const conn = new Connection(solRpc || 'https://solana-rpc.publicnode.com');
+    return await conn.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 });
+}
+
+// === WOOFI SWAP (EVM) ===
+const WOOFI_ROUTER = '0x4c4AF8DBc524681930a27b2F1Af5bcC8062E6fB7';
+
+async function woofiSwap(fromToken, toToken, amount, decimals) {
+    const eth = window.ethereum;
+    const fromAmount = '0x' + BigInt(Math.floor(amount * (10 ** decimals))).toString(16);
+    const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
+
+    // Check + approve
+    const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + WOOFI_ROUTER.slice(2).padStart(64, '0');
+    const allowance = await eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
+    if (BigInt(allowance) < BigInt(fromAmount)) {
+        sweepLog('Approving token...', 'info');
+        const approveData = '0x095ea7b3' + WOOFI_ROUTER.slice(2).padStart(64, '0') + BigInt(fromAmount).toString(16).padStart(64, '0');
+        await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: fromToken, data: approveData }] });
+        await new Promise(r => setTimeout(r, 5000));
+    }
+
+    const swapData = '0x7dc20382' + fromToken.slice(2).padStart(64, '0') + toToken.slice(2).padStart(64, '0') +
+        BigInt(fromAmount).toString(16).padStart(64, '0') + '0'.repeat(64) +
+        userAddr.slice(2).padStart(64, '0') + '0'.repeat(64);
+
+    return await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: WOOFI_ROUTER, data: swapData, value: '0x0' }] });
+}
+
+// === MAIN SWEEP ===
+async function doSweep() {
+    const btn = document.getElementById('sweepBtn');
+    const bar = document.getElementById('progressBar');
+    const fill = document.getElementById('progressFill');
+    const logEl = document.getElementById('sweepLog');
+
+    btn.disabled = true;
+    bar.style.display = 'block';
+    logEl.innerHTML = '';
+
+    const selTokens = tokens.filter((_, i) => selected.has(i));
+    const swappable = selTokens.filter(t => t.mint && !t.isNative && t.balance > 0);
+
+    if (swappable.length === 0) {
+        sweepLog('No swappable tokens selected', 'fail');
+        btn.disabled = false; bar.style.display = 'none'; return;
+    }
+
+    // Filter out tokens with near-zero amounts that Jupiter can't route
+    const MIN_AMOUNT = 0.000001;
+    const viable = swappable.filter(t => t.balance >= MIN_AMOUNT);
+    if (viable.length < swappable.length) {
+        sweepLog(`Skipping ${swappable.length - viable.length} tokens with near-zero balance`, 'info');
+    }
+
+    let ok = 0, fail = 0;
+    const total = viable.length;
+
+    for (let i = 0; i < viable.length; i++) {
+        const t = viable[i];
+        fill.style.width = ((i + 1) / total * 100) + '%';
+        btn.innerHTML = `🧹 ${i + 1}/${total}: ${t.symbol}...`;
+
+        if (t.chain === 'Solana') {
+            try {
+                const quote = await jupQuote(t.mint, t.balance, t.decimals);
+                const outDec = (OUTPUT_MINTS[destToken] || OUTPUT_MINTS.SOL).decimals;
+                const outAmt = parseInt(quote.outAmount) / (10 ** outDec);
+                sweepLog(`${t.symbol}: ${t.balance.toFixed(2)} → ${outAmt.toFixed(4)} ${destToken}`, 'info');
+
+                const { swapTransaction } = await jupSwapTx(quote, connectedSolAddr);
+                const sig = await signAndSendSolana(swapTransaction);
+                sweepLog(`${t.symbol} swept → <a href="https://solscan.io/tx/${sig}" target="_blank" style="color:var(--accent-light)">${sig.slice(0, 12)}...</a>`, 'ok');
+                ok++;
+            } catch(e) {
+                sweepLog(`${t.symbol}: ${e.message}`, 'fail');
+                fail++;
+            }
+        } else {
+            // EVM via WOOFi
+            const USDC_ADDRS = {
+                'Ethereum': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+                'Arbitrum': '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+                'Base': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+                'Optimism': '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
+                'Polygon': '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+                'BSC': '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+            };
+            try {
+                const toToken = USDC_ADDRS[t.chain];
+                if (!toToken) throw new Error('Unsupported chain');
+                const txHash = await woofiSwap(t.mint, toToken, t.balance, t.decimals || 18);
+                sweepLog(`${t.symbol} on ${t.chain} swept → ${txHash.slice(0, 16)}...`, 'ok');
+                ok++;
+            } catch(e) {
+                sweepLog(`${t.symbol}: ${e.message}`, 'fail');
+                fail++;
+            }
+        }
+
+        if (i < viable.length - 1) await new Promise(r => setTimeout(r, 1000));
+    }
+
+    // Result
+    fill.style.width = '100%';
+    if (fail === 0 && ok > 0) {
+        btn.innerHTML = `✅ Swept ${ok} token${ok > 1 ? 's' : ''}!`;
+        btn.style.background = 'linear-gradient(135deg,#22c55e,#16a34a)';
+        sweepLog(`Done! ${ok} token${ok > 1 ? 's' : ''} swept to ${destToken}`, 'ok');
+    } else if (ok > 0) {
+        btn.innerHTML = `⚠️ ${ok} swept, ${fail} failed`;
+        btn.style.background = 'linear-gradient(135deg,#eab308,#ca8a04)';
+    } else {
+        btn.innerHTML = `❌ All ${fail} failed`;
+        btn.style.background = 'linear-gradient(135deg,#ef4444,#dc2626)';
+    }
+    setTimeout(() => {
+        btn.innerHTML = '🧹 Sweep Selected<span class="sub">Sign each swap in your wallet</span>';
+        btn.style.background = ''; btn.disabled = false; bar.style.display = 'none';
+    }, 8000);
+}
+</script>
+</body>
+</html>

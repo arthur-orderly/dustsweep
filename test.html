@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DustSweep Debug</title>
+<style>
+body { background:#111; color:#eee; font-family:monospace; padding:20px; font-size:14px; }
+button { background:#8b5cf6; color:white; border:none; padding:15px 30px; border-radius:10px; font-size:16px; cursor:pointer; margin:10px 5px; }
+#log { background:#000; border:2px solid #333; padding:15px; border-radius:8px; white-space:pre-wrap; min-height:300px; margin-top:15px; line-height:1.8; }
+.token { background:#1a1a2e; border:1px solid #333; padding:10px; margin:5px 0; border-radius:6px; }
+</style>
+</head>
+<body>
+<h1>🧹 DustSweep Debug</h1>
+<button onclick="go()">Connect & Scan</button>
+<button onclick="scanDirect()">Scan Without Connect (use already connected)</button>
+<div id="log">Click a button to start...\n</div>
+<div id="tokens"></div>
+
+<script>
+function log(msg) {
+    document.getElementById('log').textContent += msg + '\n';
+    console.log(msg);
+}
+
+async function go() {
+    log('=== Starting ===');
+    const sol = window?.phantom?.solana || window?.solana;
+    
+    log('sol exists: ' + !!sol);
+    log('sol.isConnected: ' + sol?.isConnected);
+    log('sol.publicKey: ' + sol?.publicKey?.toString());
+    
+    let solAddr = null;
+    
+    // If already connected, just use it
+    if (sol?.isConnected && sol?.publicKey) {
+        solAddr = sol.publicKey.toString();
+        log('✅ Already connected: ' + solAddr);
+    } else if (sol) {
+        // Try silent connect first (no popup)
+        log('Trying silent connect (onlyIfTrusted)...');
+        try {
+            const resp = await sol.connect({ onlyIfTrusted: true });
+            solAddr = resp.publicKey.toString();
+            log('✅ Silent connect: ' + solAddr);
+        } catch(e) {
+            log('Silent connect failed: ' + e.message);
+            // Now try with popup
+            log('Trying popup connect...');
+            try {
+                const resp = await sol.connect();
+                solAddr = resp.publicKey.toString();
+                log('✅ Popup connect: ' + solAddr);
+            } catch(e2) {
+                log('❌ Popup connect failed: ' + e2.message);
+            }
+        }
+    }
+
+    if (solAddr) {
+        await scanSolana(solAddr);
+    } else {
+        log('❌ Could not get Solana address');
+    }
+}
+
+// Skip connect entirely - just use whatever is already connected
+async function scanDirect() {
+    log('=== Direct Scan ===');
+    const sol = window?.phantom?.solana || window?.solana;
+    log('sol.isConnected: ' + sol?.isConnected);
+    log('sol.publicKey: ' + sol?.publicKey?.toString());
+    
+    if (sol?.publicKey) {
+        await scanSolana(sol.publicKey.toString());
+    } else {
+        // Try hardcoded address as fallback
+        log('No publicKey available. Scanning hardcoded address...');
+        await scanSolana('2xVteVGumuMfyUxQQSMxmSL9BJDjXnkGumpSZdcNCQix');
+    }
+}
+
+async function scanSolana(addr) {
+    log('\n=== Scanning: ' + addr + ' ===');
+
+    // Try multiple RPCs until one works
+    const RPCS = [
+        'https://solana-rpc.publicnode.com',
+        'https://mainnet.helius-rpc.com/?api-key=1c0e0b5e-8c8b-4b0c-8b1c-1d1c7c4b5e8a',
+        'https://rpc.shyft.to?api_key=free-tier',
+        'https://solana.drpc.org',
+        'https://api.mainnet-beta.solana.com',
+    ];
+    
+    let workingRpc = null;
+    for (const rpc of RPCS) {
+        try {
+            log('Trying RPC: ' + rpc.split('?')[0] + '...');
+            const r = await fetch(rpc, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({jsonrpc:'2.0',id:0,method:'getHealth'})
+            });
+            if (r.ok) {
+                const d = await r.json();
+                if (!d.error) { workingRpc = rpc; log('✅ RPC works!'); break; }
+                else { log('  error: ' + JSON.stringify(d.error)); }
+            } else { log('  HTTP ' + r.status); }
+        } catch(e) { log('  failed: ' + e.message); }
+    }
+
+    if (!workingRpc) { log('❌ All RPCs failed. Try a VPN or different network.'); return; }
+
+    // SOL balance
+    try {
+        log('\nFetching SOL balance...');
+        const r = await fetch(workingRpc, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({jsonrpc:'2.0',id:1,method:'getBalance',params:[addr]})
+        });
+        const d = await r.json();
+        if (d.error) { log('RPC error: ' + JSON.stringify(d.error)); }
+        else {
+            const bal = (d?.result?.value || 0) / 1e9;
+            log('✅ SOL: ' + bal.toFixed(6));
+        }
+    } catch(e) { log('❌ SOL fetch error: ' + e.message); }
+
+    // SPL tokens
+    try {
+        log('\nFetching SPL token accounts...');
+        const r = await fetch(workingRpc, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({jsonrpc:'2.0',id:2,method:'getTokenAccountsByOwner',
+                params:[addr,{programId:'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'},{encoding:'jsonParsed'}]})
+        });
+        const d = await r.json();
+        if (d.error) {
+            log('RPC error: ' + JSON.stringify(d.error));
+            return;
+        }
+        const accts = d?.result?.value || [];
+        log('✅ Token accounts: ' + accts.length);
+
+        let tokensHtml = '<h2 style="color:#eee;margin:20px 0 10px;">Your Tokens (' + addr.slice(0,8) + '...):</h2>';
+        let count = 0;
+        for (const a of accts) {
+            try {
+                const info = a.account.data.parsed.info;
+                const amt = parseFloat(info.tokenAmount.uiAmountString || '0');
+                if (amt > 0) {
+                    count++;
+                    const mint = info.mint;
+                    log('  #' + count + ' ' + mint.slice(0,16) + '...  amount=' + amt);
+                    tokensHtml += '<div class="token"><b>' + mint.slice(0,20) + '...</b><br>Balance: ' + amt.toLocaleString() + '</div>';
+                }
+            } catch(e) {}
+        }
+        log('\n✅ Non-zero tokens: ' + count);
+        document.getElementById('tokens').innerHTML = tokensHtml;
+    } catch(e) { log('❌ SPL error: ' + e.message); }
+
+    log('\n=== Done ===');
+}
+</script>
+</body>
+</html>
