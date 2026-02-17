@@ -226,6 +226,15 @@ function sweepLog(msg, type = 'info') {
 }
 
 // === UTILS ===
+async function fetchT(url, opts = {}, ms = 8000) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try {
+        const r = await fetch(url, { ...opts, signal: ctrl.signal });
+        clearTimeout(timer);
+        return r;
+    } catch(e) { clearTimeout(timer); throw e; }
+}
 function withTimeout(promise, ms, label) {
     return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error(label + ' timed out')), ms))]);
 }
@@ -337,8 +346,8 @@ async function scan(evmAddr, solAddr) {
         for (const rpc of SOL_RPCS) {
             try {
                 log('Trying RPC: ' + rpc.replace('https://', '') + '...');
-                const r = await fetch(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'getHealth' }) });
+                const r = await fetchT(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'getHealth' }) }, 3000);
                 if (r.ok) { const d = await r.json(); if (!d.error) { solRpc = rpc; log('✅ Using ' + rpc.replace('https://', '')); break; } }
             } catch(e) {}
         }
@@ -348,14 +357,14 @@ async function scan(evmAddr, solAddr) {
         if (solRpc) try {
             log('Getting SOL balance...');
             document.getElementById('loadingText').textContent = 'Checking SOL balance...';
-            const r = await fetch(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [solAddr] }) });
+            const r = await fetchT(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [solAddr] }) }, 5000);
             const d = await r.json();
             const bal = (d?.result?.value || 0) / 1e9;
             log('SOL balance: ' + bal.toFixed(4));
             if (bal > 0.001) {
                 let price = 85;
-                try { const pr = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+                try { const pr = await fetchT('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd', {}, 3000);
                     const pd = await pr.json(); price = pd?.solana?.usd || 85; } catch(e) {}
                 tokens.push({ symbol: 'SOL', name: 'Solana', chain: 'Solana', balance: bal, usd: bal * price, color: '#9945FF', mint: null, decimals: 9, isNative: true });
                 log('SOL: $' + (bal * price).toFixed(2));
@@ -366,7 +375,7 @@ async function scan(evmAddr, solAddr) {
         if (solRpc) try {
             log('Getting SPL token accounts...');
             document.getElementById('loadingText').textContent = 'Scanning SPL tokens...';
-            const r = await fetch(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            const r = await fetchT(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTokenAccountsByOwner',
                     params: [solAddr, { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' }, { encoding: 'jsonParsed' }] }) });
             const d = await r.json();
@@ -388,7 +397,7 @@ async function scan(evmAddr, solAddr) {
 
             // Token-2022
             try {
-                const r2 = await fetch(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                const r2 = await fetchT(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'getTokenAccountsByOwner',
                         params: [solAddr, { programId: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' }, { encoding: 'jsonParsed' }] }) });
                 const d2 = await r2.json();
@@ -425,7 +434,7 @@ async function scan(evmAddr, solAddr) {
             for (let i = 0; i < mintBals.length; i += 30) {
                 const batch = mintBals.slice(i, i + 30);
                 try {
-                    const pr = await fetch('https://api.dexscreener.com/tokens/v1/solana/' + batch.map(m => m.mint).join(','));
+                    const pr = await fetchT('https://api.dexscreener.com/tokens/v1/solana/' + batch.map(m => m.mint).join(','));
                     if (pr.ok) {
                         const pairs = await pr.json();
                         if (Array.isArray(pairs)) for (const p of pairs) {
@@ -466,7 +475,7 @@ async function scan(evmAddr, solAddr) {
         ];
         let cgPrices = {};
         try {
-            const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum,matic-network,binancecoin&vs_currencies=usd');
+            const r = await fetchT('https://api.coingecko.com/api/v3/simple/price?ids=ethereum,matic-network,binancecoin&vs_currencies=usd', {}, 3000);
             const d = await r.json();
             cgPrices = { ethereum: d?.ethereum?.usd || 2700, 'matic-network': d?.['matic-network']?.usd || 0.4, binancecoin: d?.binancecoin?.usd || 300 };
         } catch(e) { cgPrices = { ethereum: 2700, 'matic-network': 0.4, binancecoin: 300 }; }
@@ -474,7 +483,7 @@ async function scan(evmAddr, solAddr) {
         for (const c of chains) {
             for (const rpc of c.rpcs) {
                 try {
-                    const r = await fetch(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    const r = await fetchT(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [evmAddr, 'latest'] }) });
                     if (!r.ok) continue;
                     const d = await r.json(); if (d.error) continue;
