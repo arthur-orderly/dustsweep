@@ -174,7 +174,7 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
                 <label><input type="checkbox" id="selAll" checked onchange="toggleAll()"> Select All</label>
                 <div class="threshold">Show under <select id="thresh" onchange="render()">
                     <option value="1">$1</option><option value="5">$5</option><option value="10">$10</option>
-                    <option value="20" selected>$20</option><option value="50">$50</option><option value="100">$100</option>
+                    <option value="20">$20</option><option value="50">$50</option><option value="100" selected>$100</option>
                 </select></div>
             </div>
             <div class="dust-list" id="dustList"></div>
@@ -508,7 +508,7 @@ async function scan(evmAddr, solAddr) {
 }
 
 // === RENDER ===
-let lastThresh = null;
+let lastThresh = null; // forces re-select on first render
 function render() {
     const thresh = parseFloat(document.getElementById('thresh').value);
     // Only re-select when threshold changes
