@@ -437,6 +437,33 @@ async function scan(evmAddr, solAddr) {
             }
             log('DexScreener prices found: ' + Object.keys(prices).length);
 
+            // Jupiter quote-based pricing for tokens DexScreener missed
+            const unpriced = mintBals.filter(mb => !prices[mb.mint]);
+            if (unpriced.length > 0) {
+                log('Getting Jupiter quotes for ' + unpriced.length + ' unpriced tokens...');
+                document.getElementById('loadingText').textContent = 'Pricing remaining tokens...';
+                for (const mb of unpriced) {
+                    try {
+                        const rawAmt = Math.floor(mb.amount * (10 ** mb.decimals));
+                        if (rawAmt <= 0) continue;
+                        const qr = await fetch(`${JUP_API}/quote?inputMint=${mb.mint}&outputMint=So11111111111111111111111111111111111111112&amount=${rawAmt}&slippageBps=500`);
+                        if (qr.ok) {
+                            const q = await qr.json();
+                            if (q.outAmount) {
+                                const solOut = parseInt(q.outAmount) / 1e9;
+                                let solPrice = 85;
+                                try { const sp = tokens.find(t => t.symbol === 'SOL'); if (sp) solPrice = sp.usd / sp.balance; } catch(e) {}
+                                const usdVal = solOut * solPrice;
+                                const perToken = usdVal / mb.amount;
+                                prices[mb.mint] = { ...(prices[mb.mint] || {}), price: perToken, jupQuote: true };
+                                log('  ' + (jupTokens[mb.mint]?.symbol || mb.mint.slice(0,6)) + ': $' + usdVal.toFixed(4) + ' (' + solOut.toFixed(6) + ' SOL)');
+                            }
+                        }
+                    } catch(e) {}
+                    await new Promise(r => setTimeout(r, 200)); // rate limit
+                }
+            }
+
             for (const mb of mintBals) {
                 const p = prices[mb.mint];
                 const jt = jupTokens[mb.mint];
