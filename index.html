@@ -508,6 +508,10 @@ async function scan(evmAddr, solAddr) {
 // === RENDER ===
 function render() {
     const thresh = parseFloat(document.getElementById('thresh').value);
+    // Update selections based on new threshold
+    selected.clear();
+    tokens.forEach((t, i) => { if (t.usd > 0 && t.usd <= thresh && !t.unpriced && !t.isNative) selected.add(i); });
+    if (document.getElementById('selAll')) document.getElementById('selAll').checked = selected.size > 0;
     const priced = tokens.filter(t => !t.unpriced && t.usd > 0);
     const total = priced.reduce((s, t) => s + t.usd, 0);
     const chainSet = new Set(tokens.map(t => t.chain));
