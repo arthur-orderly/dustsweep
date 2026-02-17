@@ -341,7 +341,7 @@ async function scan(evmAddr, solAddr) {
     if (solAddr) {
         log('--- Scanning Solana ---');
         document.getElementById('loadingText').textContent = 'Connecting to Solana...';
-        const SOL_RPCS = ['https://api.mainnet-beta.solana.com', 'https://solana.drpc.org', 'https://solana-rpc.publicnode.com'];
+        const SOL_RPCS = ['https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com', 'https://solana.drpc.org'];
         solRpc = null; let solBal = 0;
         for (const rpc of SOL_RPCS) {
             try {
@@ -359,12 +359,45 @@ async function scan(evmAddr, solAddr) {
             tokens.push({ symbol: 'SOL', name: 'Solana', chain: 'Solana', balance: solBal, usd: solBal * price, color: '#9945FF', mint: null, decimals: 9, isNative: true });
         }
 
-        // SPL tokens — try all RPCs since some choke on heavy calls
+        // SPL tokens — lightweight fetch: base64+dataSlice (72 bytes: mint+owner+amount)
         if (solRpc) try {
             log('Getting SPL token accounts...');
             document.getElementById('loadingText').textContent = 'Scanning tokens...';
+
+            // Helper: parse SPL token accounts from base64 dataSlice (72 bytes = mint 32 + owner 32 + amount u64)
+            function parseSplAccounts(accts) {
+                const results = [];
+                for (const a of accts) {
+                    try {
+                        const raw = atob(a.account.data[0]);
+                        const bytes = new Uint8Array(raw.length);
+                        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+                        // Mint: first 32 bytes as base58
+                        const mintBytes = bytes.slice(0, 32);
+                        // Amount: bytes 64-72 as little-endian u64
+                        const lo = bytes[64] | (bytes[65] << 8) | (bytes[66] << 16) | (bytes[67] << 24);
+                        const hi = bytes[68] | (bytes[69] << 8) | (bytes[70] << 16) | (bytes[71] << 24);
+                        const rawAmt = (hi >>> 0) * 4294967296 + (lo >>> 0);
+                        if (rawAmt > 0) results.push({ mintBytes, rawAmt });
+                    } catch(e) {}
+                }
+                return results;
+            }
+
+            // Base58 encode
+            function b58(bytes) {
+                const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+                let result = '';
+                let num = 0n;
+                for (const b of bytes) num = num * 256n + BigInt(b);
+                while (num > 0n) { result = ALPHABET[Number(num % 58n)] + result; num /= 58n; }
+                for (const b of bytes) { if (b === 0) result = '1' + result; else break; }
+                return result;
+            }
+
             const splBody = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTokenAccountsByOwner',
-                params: [solAddr, { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' }, { encoding: 'jsonParsed' }] });
+                params: [solAddr, { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' },
+                    { encoding: 'base64', dataSlice: { offset: 0, length: 72 } }] });
             let accts = [];
             for (const rpc of [solRpc, ...SOL_RPCS.filter(r => r !== solRpc)]) {
                 try {
@@ -375,33 +408,56 @@ async function scan(evmAddr, solAddr) {
             }
             log('SPL accounts: ' + accts.length);
 
+            // We need decimals — fetch them via getMultipleAccounts for unique mints
+            const parsed = parseSplAccounts(accts);
             const mintMap = {};
-            for (const a of accts) {
-                const info = a.account.data.parsed.info;
-                const amt = parseFloat(info.tokenAmount.uiAmountString || '0');
-                const dec = info.tokenAmount.decimals || 6;
-                if (amt > 0.000001) {
-                    if (mintMap[info.mint]) { mintMap[info.mint].amount += amt; }
-                    else { mintMap[info.mint] = { mint: info.mint, amount: amt, decimals: dec }; }
-                }
+            for (const p of parsed) {
+                const mint = b58(p.mintBytes);
+                if (mintMap[mint]) { mintMap[mint].rawAmt += p.rawAmt; }
+                else { mintMap[mint] = { mint, rawAmt: p.rawAmt, decimals: 6 }; } // default 6, refine below
             }
-            const mintBals = Object.values(mintMap);
+
+            // Batch fetch mint decimals (getMultipleAccounts, max 100)
+            const uniqueMints = Object.keys(mintMap);
+            if (uniqueMints.length > 0) {
+                try {
+                    const mintBody = JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'getMultipleAccounts',
+                        params: [uniqueMints, { encoding: 'jsonParsed' }] });
+                    const mr = await fetchT(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: mintBody }, 10000);
+                    if (mr.ok) {
+                        const md = await mr.json();
+                        const vals = md?.result?.value || [];
+                        for (let i = 0; i < vals.length; i++) {
+                            if (vals[i]?.data?.parsed?.info?.decimals !== undefined) {
+                                mintMap[uniqueMints[i]].decimals = vals[i].data.parsed.info.decimals;
+                            }
+                        }
+                    }
+                } catch(e) { log('Mint decimals fetch failed, using default 6'); }
+            }
+
+            const mintBals = Object.values(mintMap).map(m => ({
+                mint: m.mint, amount: m.rawAmt / Math.pow(10, m.decimals), decimals: m.decimals
+            })).filter(m => m.amount > 0.000001);
             log('Non-zero SPL tokens: ' + mintBals.length);
 
-            // Token-2022
+            // Token-2022 (same lightweight approach)
             try {
-                const r2 = await fetchT(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'getTokenAccountsByOwner',
-                        params: [solAddr, { programId: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' }, { encoding: 'jsonParsed' }] }) });
-                const d2 = await r2.json();
-                for (const a of (d2?.result?.value || [])) {
-                    const info = a.account.data.parsed.info;
-                    const amt = parseFloat(info.tokenAmount.uiAmountString || '0');
-                    const dec = info.tokenAmount.decimals || 6;
-                    if (amt > 0.000001) {
-                        const existing = mintBals.find(m => m.mint === info.mint);
-                        if (existing) { existing.amount += amt; }
-                        else { mintBals.push({ mint: info.mint, amount: amt, decimals: dec }); }
+                const t22Body = JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'getTokenAccountsByOwner',
+                    params: [solAddr, { programId: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' },
+                        { encoding: 'base64', dataSlice: { offset: 0, length: 72 } }] });
+                const r2 = await fetchT(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: t22Body }, 10000);
+                if (r2.ok) {
+                    const d2 = await r2.json();
+                    const parsed2 = parseSplAccounts(d2?.result?.value || []);
+                    for (const p of parsed2) {
+                        const mint = b58(p.mintBytes);
+                        const amt = p.rawAmt / 1e6; // default 6 decimals
+                        if (amt > 0.000001) {
+                            const existing = mintBals.find(m => m.mint === mint);
+                            if (existing) { existing.amount += amt; }
+                            else { mintBals.push({ mint, amount: amt, decimals: 6 }); }
+                        }
                     }
                 }
                 log('After Token-2022: ' + mintBals.length + ' tokens');
