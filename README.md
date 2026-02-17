@@ -2,7 +2,7 @@
 
 Sweep forgotten tokens from your wallet into SOL, USDC, WOO, or ORDER.
 
-**Live:** [woofi-dustsweep.vercel.app](https://woofi-dustsweep.vercel.app)
+**Live:** [arthurdex.com/sweep](https://arthurdex.com/sweep)
 
 ## How it works
 
