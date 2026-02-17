@@ -439,30 +439,37 @@ async function scan(evmAddr, solAddr) {
             }
             log('DexScreener prices found: ' + Object.keys(prices).length);
 
-            // Jupiter quote-based pricing for tokens DexScreener missed
-            const unpriced = mintBals.filter(mb => !prices[mb.mint]);
+            // Jupiter quote-based pricing for tokens DexScreener missed (parallel, 5s timeout)
+            const unpriced = mintBals.filter(mb => !prices[mb.mint] && mb.amount > 0.000001);
             if (unpriced.length > 0) {
                 log('Getting Jupiter quotes for ' + unpriced.length + ' unpriced tokens...');
-                document.getElementById('loadingText').textContent = 'Pricing remaining tokens...';
-                for (const mb of unpriced) {
+                document.getElementById('loadingText').textContent = 'Pricing ' + unpriced.length + ' tokens...';
+                let solPrice = 85;
+                try { const sp = tokens.find(t => t.symbol === 'SOL'); if (sp) solPrice = sp.usd / sp.balance; } catch(e) {}
+
+                const priceOne = async (mb) => {
                     try {
                         const rawAmt = Math.floor(mb.amount * (10 ** mb.decimals));
-                        if (rawAmt <= 0) continue;
-                        const qr = await fetch(`${JUP_API}/quote?inputMint=${mb.mint}&outputMint=So11111111111111111111111111111111111111112&amount=${rawAmt}&slippageBps=500`);
+                        if (rawAmt <= 0) return;
+                        const ctrl = new AbortController();
+                        const timer = setTimeout(() => ctrl.abort(), 5000);
+                        const qr = await fetch(`${JUP_API}/quote?inputMint=${mb.mint}&outputMint=So11111111111111111111111111111111111111112&amount=${rawAmt}&slippageBps=500`, { signal: ctrl.signal });
+                        clearTimeout(timer);
                         if (qr.ok) {
                             const q = await qr.json();
                             if (q.outAmount) {
                                 const solOut = parseInt(q.outAmount) / 1e9;
-                                let solPrice = 85;
-                                try { const sp = tokens.find(t => t.symbol === 'SOL'); if (sp) solPrice = sp.usd / sp.balance; } catch(e) {}
                                 const usdVal = solOut * solPrice;
-                                const perToken = usdVal / mb.amount;
-                                prices[mb.mint] = { ...(prices[mb.mint] || {}), price: perToken, jupQuote: true };
-                                log('  ' + (jupTokens[mb.mint]?.symbol || mb.mint.slice(0,6)) + ': $' + usdVal.toFixed(4) + ' (' + solOut.toFixed(6) + ' SOL)');
+                                prices[mb.mint] = { ...(prices[mb.mint] || {}), price: usdVal / mb.amount, jupQuote: true };
+                                log('  ' + (jupTokens[mb.mint]?.symbol || mb.mint.slice(0,6)) + ': $' + usdVal.toFixed(4));
                             }
                         }
                     } catch(e) {}
-                    await new Promise(r => setTimeout(r, 200)); // rate limit
+                };
+
+                // Process in batches of 5
+                for (let i = 0; i < unpriced.length; i += 5) {
+                    await Promise.all(unpriced.slice(i, i + 5).map(priceOne));
                 }
             }
 
