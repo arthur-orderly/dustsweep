@@ -112,6 +112,12 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
 .connect-btns .btn { padding:14px 28px; font-size:1rem; }
 .connect-btns .btn.sol { background:#9945FF; }
 .connect-btns .btn.sol:hover { background:#b06aff; }
+.loading-state { text-align:center; padding:60px 20px; }
+.loading-state .spinner { width:40px; height:40px; border:3px solid var(--border); border-top-color:var(--accent);
+    border-radius:50%; animation:spin 0.8s linear infinite; margin:0 auto 20px; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.loading-state .text { color:var(--text-dim); font-size:0.9rem; animation:pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity:0.5; } 50% { opacity:1; } }
 @media (max-width:640px) { .header{padding:16px 20px;} .hero h1{font-size:2rem;} .stats-bar,.features{flex-direction:column;} .connect-btns{flex-direction:column;} }
 </style>
 </head>
@@ -151,6 +157,10 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
     <div id="debugLog"></div>
 
     <div id="postConnect" style="display:none;">
+        <div id="loadingState" class="loading-state">
+            <div class="spinner"></div>
+            <div class="text" id="loadingText">Scanning your wallet...</div>
+        </div>
         <div class="stats-bar" id="statsBar" style="display:none;margin-top:20px;">
             <div class="stat-card"><div class="stat-value purple" id="stTokens">0</div><div class="stat-label">Tokens Found</div></div>
             <div class="stat-card"><div class="stat-value green" id="stValue">$0</div><div class="stat-label">Recoverable</div></div>
@@ -308,10 +318,18 @@ async function connectEVM() {
 // === SCAN ===
 async function scan(evmAddr, solAddr) {
     tokens = []; selected.clear();
+    document.getElementById('loadingState').style.display = 'block';
+    document.getElementById('statsBar').style.display = 'none';
+    document.getElementById('chainTabs').style.display = 'none';
+    document.getElementById('tokenPanel').style.display = 'none';
+    document.getElementById('configPanel').style.display = 'none';
+    document.getElementById('summaryPanel').style.display = 'none';
+    document.getElementById('sweepBtn').style.display = 'none';
 
     // === SOLANA ===
     if (solAddr) {
         log('--- Scanning Solana ---');
+        document.getElementById('loadingText').textContent = 'Finding Solana RPC...';
         const SOL_RPCS = ['https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com', 'https://solana.drpc.org'];
         solRpc = null;
         for (const rpc of SOL_RPCS) {
@@ -327,6 +345,7 @@ async function scan(evmAddr, solAddr) {
         // Native SOL
         if (solRpc) try {
             log('Getting SOL balance...');
+            document.getElementById('loadingText').textContent = 'Checking SOL balance...';
             const r = await fetch(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [solAddr] }) });
             const d = await r.json();
@@ -344,6 +363,7 @@ async function scan(evmAddr, solAddr) {
         // SPL tokens
         if (solRpc) try {
             log('Getting SPL token accounts...');
+            document.getElementById('loadingText').textContent = 'Scanning SPL tokens...';
             const r = await fetch(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTokenAccountsByOwner',
                     params: [solAddr, { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' }, { encoding: 'jsonParsed' }] }) });
@@ -385,6 +405,7 @@ async function scan(evmAddr, solAddr) {
 
             // Fetch Jupiter token list for names/symbols/logos
             log('Fetching token metadata...');
+            document.getElementById('loadingText').textContent = 'Loading token names...';
             const jupTokens = {};
             try {
                 const jtr = await fetch('https://cache.jup.ag/tokens');
@@ -397,6 +418,7 @@ async function scan(evmAddr, solAddr) {
 
             // DexScreener prices
             log('Fetching prices from DexScreener...');
+            document.getElementById('loadingText').textContent = 'Fetching prices...';
             const prices = {};
             for (let i = 0; i < mintBals.length; i += 30) {
                 const batch = mintBals.slice(i, i + 30);
@@ -473,6 +495,7 @@ async function scan(evmAddr, solAddr) {
     const thresh = parseFloat(document.getElementById('thresh').value);
     tokens.forEach((t, i) => { if (t.usd > 0 && t.usd <= thresh && !t.unpriced && !t.isNative) selected.add(i); });
 
+    document.getElementById('loadingState').style.display = 'none';
     document.getElementById('statsBar').style.display = 'flex';
     document.getElementById('chainTabs').style.display = 'flex';
     document.getElementById('tokenPanel').style.display = 'block';
