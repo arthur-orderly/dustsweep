@@ -374,7 +374,7 @@ async function scan(evmAddr, solAddr) {
         // SPL tokens
         if (solRpc) try {
             log('Getting SPL token accounts...');
-            document.getElementById('loadingText').textContent = 'Scanning SPL tokens...';
+            document.getElementById('loadingText').textContent = 'Scanning tokens...';
             const r = await fetchT(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTokenAccountsByOwner',
                     params: [solAddr, { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' }, { encoding: 'jsonParsed' }] }) });
