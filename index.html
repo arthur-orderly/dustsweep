@@ -226,7 +226,7 @@ function sweepLog(msg, type = 'info') {
 }
 
 // === UTILS ===
-async function fetchT(url, opts = {}, ms = 8000) {
+async function fetchT(url, opts = {}, ms = 15000) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), ms);
     try {
