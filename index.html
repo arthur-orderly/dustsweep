@@ -508,12 +508,50 @@ async function scan(evmAddr, solAddr) {
 
     document.getElementById('loadingState').style.display = 'none';
     document.getElementById('statsBar').style.display = 'flex';
+
+    // Background: price unpriced tokens via Jupiter quotes (non-blocking)
+    if (solAddr) backgroundPrice();
     document.getElementById('chainTabs').style.display = 'flex';
     document.getElementById('tokenPanel').style.display = 'block';
     document.getElementById('configPanel').style.display = 'block';
     document.getElementById('summaryPanel').style.display = 'block';
     document.getElementById('sweepBtn').style.display = 'block';
     render();
+}
+
+// === BACKGROUND PRICING (runs after UI shows) ===
+async function backgroundPrice() {
+    const unpricedIdx = tokens.map((t,i) => ({t,i})).filter(({t}) => t.unpriced && t.mint && t.balance > 0.000001 && t.chain === 'Solana');
+    if (unpricedIdx.length === 0) return;
+    log('Background pricing ' + unpricedIdx.length + ' tokens...');
+
+    let solPrice = 85;
+    try { const sp = tokens.find(t => t.symbol === 'SOL' && !t.unpriced); if (sp) solPrice = sp.usd / sp.balance; } catch(e) {}
+
+    const priceOne = async ({t, i}) => {
+        try {
+            const rawAmt = Math.floor(t.balance * (10 ** t.decimals));
+            if (rawAmt <= 0) return;
+            const qr = await fetchT(`${JUP_API}/quote?inputMint=${t.mint}&outputMint=So11111111111111111111111111111111111111112&amount=${rawAmt}&slippageBps=500`, {}, 4000);
+            if (qr.ok) {
+                const q = await qr.json();
+                if (q.outAmount) {
+                    const solOut = parseInt(q.outAmount) / 1e9;
+                    const usdVal = solOut * solPrice;
+                    tokens[i].usd = usdVal;
+                    tokens[i].unpriced = false;
+                    log('  ' + t.symbol + ': $' + usdVal.toFixed(4));
+                }
+            }
+        } catch(e) {}
+    };
+
+    // 5 at a time
+    for (let i = 0; i < unpricedIdx.length; i += 5) {
+        await Promise.all(unpricedIdx.slice(i, i + 5).map(priceOne));
+        lastThresh = null; // force re-select
+        render();
+    }
 }
 
 // === RENDER ===
