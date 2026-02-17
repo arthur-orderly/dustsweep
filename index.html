@@ -522,7 +522,7 @@ async function scan(evmAddr, solAddr) {
     tokens.sort((a, b) => b.usd - a.usd);
     log('--- Total: ' + tokens.length + ' tokens ---');
     const thresh = parseFloat(document.getElementById('thresh').value);
-    tokens.forEach((t, i) => { if (t.usd > 0 && t.usd <= thresh && !t.unpriced && !t.isNative) selected.add(i); });
+    tokens.forEach((t, i) => { if (t.usd > 0 && t.usd <= thresh && !t.unpriced) selected.add(i); });
 
     document.getElementById('loadingState').style.display = 'none';
     document.getElementById('statsBar').style.display = 'flex';
@@ -541,7 +541,7 @@ function render() {
     // Only re-select when threshold changes
     if (lastThresh !== thresh) {
         selected.clear();
-        tokens.forEach((t, i) => { if (t.usd > 0 && t.usd <= thresh && !t.unpriced && !t.isNative) selected.add(i); });
+        tokens.forEach((t, i) => { if (t.usd > 0 && t.usd <= thresh && !t.unpriced) selected.add(i); });
         lastThresh = thresh;
     }
     const priced = tokens.filter(t => !t.unpriced && t.usd > 0);
@@ -571,11 +571,11 @@ function render() {
         const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
         const safeSymbol = esc(t.symbol); const safeName = esc(t.name || '');
         const iconHtml = t.img ? `<img src="${esc(t.img)}" onerror="this.outerHTML='${safeSymbol.slice(0, 2)}'">` : safeSymbol.slice(0, 2);
-        html += `<div class="dust-item ${sel ? 'selected' : ''}" onclick="${t.isNative ? '' : 'toggleSel('+t.idx+')'}" style="${dim ? 'opacity:0.45' : ''}${t.isNative ? ';cursor:default' : ''}">
+        html += `<div class="dust-item ${sel ? 'selected' : ''}" onclick="${t.isNative ? '' : 'toggleSel('+t.idx+')'}" style="${dim ? 'opacity:0.45' : ''}">
             <div class="check">${sel ? '✓' : ''}</div>
             <div class="icon" style="background:${t.color}20;color:${t.color};">${iconHtml}</div>
             <div class="info">
-                <div class="name">${safeSymbol} <span class="badge">${t.chain}</span>${t.isNative ? ' <span class="badge" style="background:rgba(113,113,122,0.15);color:var(--text-dim);">gas · not sweepable</span>' : ''}</div>
+                <div class="name">${safeSymbol} <span class="badge">${t.chain}</span>${t.isNative ? ' <span class="badge" style="background:rgba(113,113,122,0.15);color:var(--text-dim);">gas token</span>' : ''}</div>
                 <div class="bal">${balStr} ${safeSymbol}</div>
             </div>
             <div class="val ${dim ? 'dim' : ''}">${t.unpriced || t.usd === 0 ? 'No price' : '$' + t.usd.toFixed(2)}</div>
@@ -599,7 +599,7 @@ function render() {
 }
 
 function toggleSel(i) { if (selected.has(i)) selected.delete(i); else selected.add(i); render(); }
-function toggleAll() { const c = document.getElementById('selAll').checked; if (c) tokens.forEach((t, i) => { if (!t.unpriced && t.usd > 0 && !t.isNative) selected.add(i); }); else selected.clear(); render(); }
+function toggleAll() { const c = document.getElementById('selAll').checked; if (c) tokens.forEach((t, i) => { if (!t.unpriced && t.usd > 0) selected.add(i); }); else selected.clear(); render(); }
 function pickToken(el, t) { document.querySelectorAll('.config-option').forEach(o => o.classList.remove('active')); el.classList.add('active'); destToken = t; render(); }
 
 // === JUPITER SWAP (Solana) ===
@@ -690,7 +690,7 @@ async function doSweep() {
     logEl.innerHTML = '';
 
     const selTokens = tokens.filter((_, i) => selected.has(i));
-    const swappable = selTokens.filter(t => t.mint && !t.isNative && t.balance > 0);
+    const swappable = selTokens.filter(t => t.balance > 0 && (!t.isNative || t.chain === 'Solana'));
 
     if (swappable.length === 0) {
         sweepLog('No swappable tokens selected', 'fail');
@@ -714,7 +714,11 @@ async function doSweep() {
 
         if (t.chain === 'Solana') {
             try {
-                const quote = await jupQuote(t.mint, t.balance, t.decimals);
+                const mintToSwap = t.isNative ? 'So11111111111111111111111111111111111111112' : t.mint;
+                // Reserve 0.01 SOL for gas if sweeping native SOL
+                const amtToSwap = t.isNative ? Math.max(0, t.balance - 0.01) : t.balance;
+                if (amtToSwap <= 0) { sweepLog(t.symbol + ': keeping for gas', 'info'); fail++; continue; }
+                const quote = await jupQuote(mintToSwap, amtToSwap, t.decimals);
                 const outDec = (OUTPUT_MINTS[destToken] || OUTPUT_MINTS.SOL).decimals;
                 const outAmt = parseInt(quote.outAmount) / (10 ** outDec);
                 sweepLog(`${t.symbol}: ${t.balance.toFixed(2)} → ${outAmt.toFixed(4)} ${destToken}`, 'info');
