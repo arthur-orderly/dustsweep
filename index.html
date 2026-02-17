@@ -340,36 +340,24 @@ async function scan(evmAddr, solAddr) {
     // === SOLANA ===
     if (solAddr) {
         log('--- Scanning Solana ---');
-        document.getElementById('loadingText').textContent = 'Finding Solana RPC...';
+        document.getElementById('loadingText').textContent = 'Connecting to Solana...';
         const SOL_RPCS = ['https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com', 'https://solana.drpc.org'];
-        solRpc = null;
+        solRpc = null; let solBal = 0;
         for (const rpc of SOL_RPCS) {
             try {
-                log('Trying RPC: ' + rpc.replace('https://', '') + '...');
+                log('Trying ' + rpc.replace('https://', '') + '...');
                 const r = await fetchT(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'getHealth' }) }, 3000);
-                if (r.ok) { const d = await r.json(); if (!d.error) { solRpc = rpc; log('✅ Using ' + rpc.replace('https://', '')); break; } }
-            } catch(e) {}
+                    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [solAddr] }) }, 5000);
+                if (r.ok) { const d = await r.json(); if (!d.error) { solRpc = rpc; solBal = (d?.result?.value || 0) / 1e9; log('✅ ' + rpc.replace('https://','') + ' SOL=' + solBal.toFixed(4)); break; } }
+            } catch(e) { log('  skip'); }
         }
-        if (!solRpc) { log('❌ All Solana RPCs failed'); }
-
-        // Native SOL
-        if (solRpc) try {
-            log('Getting SOL balance...');
-            document.getElementById('loadingText').textContent = 'Checking SOL balance...';
-            const r = await fetchT(solRpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [solAddr] }) }, 5000);
-            const d = await r.json();
-            const bal = (d?.result?.value || 0) / 1e9;
-            log('SOL balance: ' + bal.toFixed(4));
-            if (bal > 0.001) {
-                let price = 85;
-                try { const pr = await fetchT('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd', {}, 3000);
-                    const pd = await pr.json(); price = pd?.solana?.usd || 85; } catch(e) {}
-                tokens.push({ symbol: 'SOL', name: 'Solana', chain: 'Solana', balance: bal, usd: bal * price, color: '#9945FF', mint: null, decimals: 9, isNative: true });
-                log('SOL: $' + (bal * price).toFixed(2));
-            }
-        } catch(e) { log('SOL error: ' + e.message); }
+        if (!solRpc) { log('❌ All RPCs failed'); }
+        if (solRpc && solBal > 0.001) {
+            let price = 85;
+            try { const pr = await fetchT('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd', {}, 3000);
+                const pd = await pr.json(); price = pd?.solana?.usd || 85; } catch(e) {}
+            tokens.push({ symbol: 'SOL', name: 'Solana', chain: 'Solana', balance: solBal, usd: solBal * price, color: '#9945FF', mint: null, decimals: 9, isNative: true });
+        }
 
         // SPL tokens
         if (solRpc) try {
