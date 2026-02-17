@@ -507,7 +507,7 @@ function render() {
     let html = '';
     for (const t of filtered) {
         const sel = selected.has(t.idx);
-        const dim = t.unpriced || t.usd === 0 || t.isNative;
+        const dim = t.unpriced || t.usd === 0;
         const balStr = t.balance.toLocaleString(undefined, { maximumFractionDigits: 4 });
         const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
         const safeSymbol = esc(t.symbol); const safeName = esc(t.name || '');
@@ -519,7 +519,7 @@ function render() {
                 <div class="name">${safeSymbol} <span class="badge">${t.chain}</span>${t.isNative ? ' <span class="badge" style="background:rgba(113,113,122,0.15);color:var(--text-dim);">gas · not sweepable</span>' : ''}</div>
                 <div class="bal">${balStr} ${safeSymbol}</div>
             </div>
-            <div class="val ${dim ? 'dim' : ''}">${dim ? 'No price' : '$' + t.usd.toFixed(2)}</div>
+            <div class="val ${dim ? 'dim' : ''}">${t.unpriced || t.usd === 0 ? 'No price' : '$' + t.usd.toFixed(2)}</div>
         </div>`;
     }
     const noSweepable = tokens.length > 0 && tokens.every(t => t.isNative || t.unpriced || t.usd === 0);
