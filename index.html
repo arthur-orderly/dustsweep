@@ -485,7 +485,7 @@ async function scan(evmAddr, solAddr) {
 // === RENDER ===
 function render() {
     const thresh = parseFloat(document.getElementById('thresh').value);
-    const priced = tokens.filter(t => !t.unpriced && t.usd > 0 && !t.isNative);
+    const priced = tokens.filter(t => !t.unpriced && t.usd > 0);
     const total = priced.reduce((s, t) => s + t.usd, 0);
     const chainSet = new Set(tokens.map(t => t.chain));
     const sweepable = tokens.filter(t => !t.isNative && !t.unpriced && t.usd > 0).length;
