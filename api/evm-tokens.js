@@ -23,6 +23,17 @@ export default async function handler(req, res) {
 
   // Chains without Blockscout — fall back to known token list + RPC
   const FALLBACK_CHAINS = [
+    { name: 'Avalanche', slug: 'avalanche', rpcs: ['https://api.avax.network/ext/bc/C/rpc', 'https://1rpc.io/avax/c'],
+      tokens: [
+        { addr: '0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e', sym: 'USDC', dec: 6 },
+        { addr: '0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7', sym: 'USDT', dec: 6 },
+        { addr: '0x49d5c2bdffac6ce2bfdb6640f4f80f226bc10bab', sym: 'WETH.e', dec: 18 },
+        { addr: '0x50b7545627a5162f82a992c33b87adc75187b218', sym: 'WBTC.e', dec: 8 },
+        { addr: '0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7', sym: 'WAVAX', dec: 18 },
+        { addr: '0x152b9d0fdc40c096de345126670049886af8c1d2', sym: 'WOO', dec: 18 },
+        { addr: '0x6e84a6216ea6dacc71ee8e6b0a5b7322eebc0fdd', sym: 'JOE', dec: 18 },
+        { addr: '0x2b2c81e08f1af8835a78bb2a90ae924ace0ea4be', sym: 'sAVAX', dec: 18 },
+      ]},
     { name: 'Mantle', slug: 'mantle', rpcs: ['https://rpc.mantle.xyz'],
       tokens: [
         { addr: '0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9', sym: 'USDC', dec: 6 },
