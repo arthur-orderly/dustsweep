@@ -173,6 +173,7 @@ export default async function handler(req, res) {
       { addr: '0x532f27101965dd16442e59d40670faf5ebb142e4', sym: 'BRETT', dec: 18 },
       { addr: '0xbc45647ea894030a4e9801ec03479739fa2485f0', sym: 'TOSHI', dec: 18 },
       { addr: '0x0b3e328455c4059ebc0290ba6bab5a2eba2bdca1', sym: 'VIRTUAL', dec: 18 },
+      { addr: '0x4f81837c2f4a189a0b69370027cc2627d93785b4', sym: 'SERAPH', dec: 18 },
     ],
     'Optimism': [
       { addr: '0x0b2c639c533813f4aa9d7837caf62653d097ff85', sym: 'USDC', dec: 6 },
