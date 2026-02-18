@@ -737,7 +737,8 @@ async function woofiSwap(fromToken, toToken, amount, decimals) {
     // Check + approve
     const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + WOOFI_ROUTER.slice(2).padStart(64, '0');
     const allowance = await eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
-    if (BigInt(allowance) < BigInt(fromAmount)) {
+    const allowanceBig = BigInt(allowance && allowance !== '0x' ? allowance : '0x0');
+    if (allowanceBig < BigInt(fromAmount)) {
         sweepLog('Approving token...', 'info');
         const approveData = '0x095ea7b3' + WOOFI_ROUTER.slice(2).padStart(64, '0') + BigInt(fromAmount).toString(16).padStart(64, '0');
         await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: fromToken, data: approveData }] });
@@ -751,13 +752,14 @@ async function woofiSwap(fromToken, toToken, amount, decimals) {
         const queryData = '0xe94803f4' + fromToken.slice(2).padStart(64, '0') + toToken.slice(2).padStart(64, '0') +
             BigInt(fromAmount).toString(16).padStart(64, '0');
         const queryResult = await eth.request({ method: 'eth_call', params: [{ to: WOOFI_ROUTER, data: queryData }, 'latest'] });
+        if (!queryResult || queryResult === '0x') throw new Error('Empty query result');
         const expectedOut = BigInt(queryResult);
         minToAmount = '0x' + (expectedOut * 98n / 100n).toString(16); // 2% slippage tolerance
         sweepLog('Expected output: ' + (Number(expectedOut) / 1e6).toFixed(2) + ', min: ' + (Number(expectedOut * 98n / 100n) / 1e6).toFixed(2), 'info');
     } catch(e) { log('querySwap failed, using 0 minToAmount'); }
 
     const swapData = '0x7dc20382' + fromToken.slice(2).padStart(64, '0') + toToken.slice(2).padStart(64, '0') +
-        BigInt(fromAmount).toString(16).padStart(64, '0') + BigInt(minToAmount).toString(16).padStart(64, '0') +
+        BigInt(fromAmount).toString(16).padStart(64, '0') + BigInt(minToAmount || '0').toString(16).padStart(64, '0') +
         userAddr.slice(2).padStart(64, '0') + '0'.repeat(64);
 
     return await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: WOOFI_ROUTER, data: swapData, value: '0x0' }] });
