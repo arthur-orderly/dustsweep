@@ -456,13 +456,15 @@ async function scan(evmAddr, solAddr) {
             { name: 'Optimism', rpcs: ['https://mainnet.optimism.io', 'https://1rpc.io/op', 'https://optimism-rpc.publicnode.com'], sym: 'ETH', cgId: 'ethereum' },
             { name: 'Polygon', rpcs: ['https://polygon-rpc.com', 'https://1rpc.io/matic', 'https://polygon-bor-rpc.publicnode.com'], sym: 'POL', cgId: 'matic-network' },
             { name: 'BSC', rpcs: ['https://bsc-dataseed.binance.org', 'https://1rpc.io/bnb', 'https://bsc-rpc.publicnode.com'], sym: 'BNB', cgId: 'binancecoin' },
+            { name: 'Mantle', rpcs: ['https://rpc.mantle.xyz', 'https://mantle-rpc.publicnode.com'], sym: 'MNT', cgId: 'mantle' },
+            { name: 'Merlin', rpcs: ['https://rpc.merlinchain.io'], sym: 'BTC', cgId: 'bitcoin' },
         ];
         let cgPrices = {};
         try {
-            const r = await fetchT('https://api.coingecko.com/api/v3/simple/price?ids=ethereum,matic-network,binancecoin&vs_currencies=usd', {}, 3000);
+            const r = await fetchT('https://api.coingecko.com/api/v3/simple/price?ids=ethereum,matic-network,binancecoin,mantle,bitcoin&vs_currencies=usd', {}, 3000);
             const d = await r.json();
-            cgPrices = { ethereum: d?.ethereum?.usd || 2700, 'matic-network': d?.['matic-network']?.usd || 0.4, binancecoin: d?.binancecoin?.usd || 300 };
-        } catch(e) { cgPrices = { ethereum: 2700, 'matic-network': 0.4, binancecoin: 300 }; }
+            cgPrices = { ethereum: d?.ethereum?.usd || 2700, 'matic-network': d?.['matic-network']?.usd || 0.4, binancecoin: d?.binancecoin?.usd || 300, mantle: d?.mantle?.usd || 0.5, bitcoin: d?.bitcoin?.usd || 60000 };
+        } catch(e) { cgPrices = { ethereum: 2700, 'matic-network': 0.4, binancecoin: 300, mantle: 0.5, bitcoin: 60000 }; }
 
         for (const c of chains) {
             for (const rpc of c.rpcs) {
@@ -482,6 +484,61 @@ async function scan(evmAddr, solAddr) {
                 } catch(e) { continue; }
             }
         }
+
+        // === ERC-20 Token Discovery via server proxy ===
+        log('Scanning ERC-20 tokens...');
+        document.getElementById('loadingText').textContent = 'Scanning ERC-20 tokens...';
+        try {
+            const erc20Resp = await fetchT('/api/evm-tokens?addr=' + encodeURIComponent(evmAddr), {}, 20000);
+            if (erc20Resp.ok) {
+                const erc20Data = await erc20Resp.json();
+                const erc20Tokens = erc20Data.tokens || [];
+                log('Found ' + erc20Tokens.length + ' ERC-20 tokens via ' + erc20Data.source);
+
+                // DexScreener pricing for ERC-20 tokens
+                const DEXSCREENER_SLUGS = { 'Ethereum': 'ethereum', 'Arbitrum': 'arbitrum', 'Base': 'base', 'Optimism': 'optimism', 'Polygon': 'polygon', 'BSC': 'bsc', 'Mantle': 'mantle', 'Merlin': 'merlin' };
+                const byChain = {};
+                for (const t of erc20Tokens) {
+                    const slug = DEXSCREENER_SLUGS[t.chain];
+                    if (!slug) continue;
+                    if (!byChain[slug]) byChain[slug] = [];
+                    byChain[slug].push(t);
+                }
+
+                const dsPrices = {}; // contractAddress -> { price, img }
+                for (const [slug, chainTokens] of Object.entries(byChain)) {
+                    for (let i = 0; i < chainTokens.length; i += 30) {
+                        const batch = chainTokens.slice(i, i + 30);
+                        try {
+                            const dsResp = await fetchT('https://api.dexscreener.com/tokens/v1/' + slug + '/' + batch.map(t => t.contractAddress).join(','), {}, 5000);
+                            if (dsResp.ok) {
+                                const pairs = await dsResp.json();
+                                if (Array.isArray(pairs)) for (const p of pairs) {
+                                    const base = p.baseToken || {};
+                                    if (base.address && !dsPrices[base.address.toLowerCase()])
+                                        dsPrices[base.address.toLowerCase()] = { price: parseFloat(p.priceUsd || '0'), img: p.info?.imageUrl || null };
+                                }
+                            }
+                        } catch(e) {}
+                        if (i + 30 < chainTokens.length) await new Promise(r => setTimeout(r, 300));
+                    }
+                }
+                log('DexScreener ERC-20 prices: ' + Object.keys(dsPrices).length);
+
+                for (const t of erc20Tokens) {
+                    const dp = dsPrices[t.contractAddress.toLowerCase()];
+                    const price = dp?.price || 0;
+                    const usd = t.balance * price;
+                    tokens.push({
+                        symbol: t.symbol, name: t.name, chain: t.chain, balance: t.balance,
+                        usd, color: COLORS[tokens.length % COLORS.length],
+                        mint: t.contractAddress, decimals: t.decimals,
+                        img: dp?.img || t.logoUrl || null,
+                        unpriced: price === 0, isNative: false, isErc20: true
+                    });
+                }
+            }
+        } catch(e) { log('ERC-20 scan error: ' + e.message); }
     }
 
     // Sort by value, auto-select priced tokens under threshold
@@ -757,10 +814,12 @@ async function doSweep() {
                 'Optimism': '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
                 'Polygon': '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
                 'BSC': '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+                'Mantle': '0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9',
             };
             try {
+                if (t.isNative) throw new Error('Native gas token — skip');
                 const toToken = USDC_ADDRS[t.chain];
-                if (!toToken) throw new Error('Unsupported chain');
+                if (!toToken) throw new Error('No swap route on ' + t.chain + ' (view only)');
                 const txHash = await woofiSwap(t.mint, toToken, t.balance, t.decimals || 18);
                 sweepLog(`${t.symbol} on ${t.chain} swept → ${txHash.slice(0, 16)}...`, 'ok');
                 ok++;
