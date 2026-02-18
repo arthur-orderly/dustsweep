@@ -183,10 +183,10 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
         <div class="card" id="configPanel" style="display:none;">
             <div style="font-size:0.8rem;font-weight:600;color:var(--text-dim);margin-bottom:14px;text-transform:uppercase;">Sweep into</div>
             <div class="config-row">
-                <div class="config-option active" onclick="pickToken(this,'SOL')"><div class="tn">SOL</div><div class="td">Solana</div></div>
-                <div class="config-option" onclick="pickToken(this,'USDC')"><div class="tn">USDC</div><div class="td">Stablecoin</div></div>
-                <div class="config-option" onclick="pickToken(this,'ETH')"><div class="tn">ETH</div><div class="td">Ethereum</div></div>
-                <div class="config-option" onclick="pickToken(this,'USDT')"><div class="tn">USDT</div><div class="td">Stablecoin</div></div>
+                <div class="config-option active" onclick="pickToken(this,'USDC')"><div class="tn">USDC</div><div class="td">Same chain</div></div>
+                <div class="config-option" onclick="pickToken(this,'USDC-ARB')"><div class="tn">USDC</div><div class="td">→ Arbitrum</div></div>
+                <div class="config-option" onclick="pickToken(this,'USDC-SOL')"><div class="tn">USDC</div><div class="td">→ Solana</div></div>
+                <div class="config-option" onclick="pickToken(this,'SOL')"><div class="tn">SOL</div><div class="td">→ Solana</div></div>
 
             </div>
         </div>
@@ -210,7 +210,7 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
 <script>
 // === STATE ===
 const COLORS = ['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD','#98D8C8','#F7DC6F','#BB8FCE','#85C1E9','#F0B27A','#82E0AA'];
-let tokens = [], selected = new Set(), destToken = 'SOL', chainFilter = 'all', solRpc = null;
+let tokens = [], selected = new Set(), destToken = 'USDC', chainFilter = 'all', solRpc = null;
 let connectedSolAddr = null, connectedEvmAddr = null;
 
 // === DEBUG ===
@@ -666,7 +666,8 @@ function render() {
     document.getElementById('smTok').textContent = selTokens.length;
     document.getElementById('smGross').textContent = '$' + gross.toFixed(2);
     document.getElementById('smFee').textContent = 'Free (beta)';
-    document.getElementById('smNet').textContent = '~$' + (gross - fee).toFixed(2) + ' ' + destToken;
+    const destLabel = { 'USDC': 'USDC (same chain)', 'USDC-ARB': 'USDC on Arbitrum', 'USDC-SOL': 'USDC on Solana', 'SOL': 'SOL on Solana' }[destToken] || destToken;
+    document.getElementById('smNet').textContent = '~$' + (gross - fee).toFixed(2) + ' → ' + destLabel;
     document.getElementById('sweepBtn').disabled = selTokens.length === 0;
 }
 
@@ -677,10 +678,12 @@ function pickToken(el, t) { document.querySelectorAll('.config-option').forEach(
 // === JUPITER SWAP (Solana) ===
 const JUP_API = 'https://lite-api.jup.ag/swap/v1';
 const OUTPUT_MINTS = {
-    SOL:   { mint: 'So11111111111111111111111111111111111111112', decimals: 9 },
-    USDC:  { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6 },
-    ETH:   { mint: '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs', decimals: 8 },
-    USDT:  { mint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', decimals: 6 },
+    SOL:        { mint: 'So11111111111111111111111111111111111111112', decimals: 9 },
+    USDC:       { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6 },
+    'USDC-SOL': { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6 },
+    'USDC-ARB': { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6 }, // swap to USDC on Solana first, bridge handled separately if needed
+    ETH:        { mint: '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs', decimals: 8 },
+    USDT:       { mint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', decimals: 6 },
 };
 
 async function jupQuote(inputMint, amount, decimals) {
@@ -827,6 +830,75 @@ async function odosSwap(fromToken, chainName, amount, decimals) {
     });
 }
 
+// === LI.FI CROSS-CHAIN SWAP+BRIDGE ===
+const LIFI_API = 'https://li.quest/v1';
+const LIFI_CHAIN_MAP = {
+    'Ethereum': 'ETH', 'Arbitrum': 'ARB', 'Base': 'BAS', 'Optimism': 'OPT',
+    'Polygon': 'POL', 'BSC': 'BSC', 'Blast': 'BLA', 'Avalanche': 'AVA',
+    'ZKsync': 'ERA', 'Scroll': 'SCL', 'Gnosis': 'GNO', 'Mantle': 'MNT',
+};
+const LIFI_DEST = {
+    'USDC-ARB': { chain: 'ARB', token: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' },
+    'USDC-SOL': { chain: 'SOL', token: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
+    'SOL':      { chain: 'SOL', token: '11111111111111111111111111111111' },
+};
+
+async function lifiSwapBridge(fromToken, chainName, amount, decimals, destKey, solAddr) {
+    const eth = window.ethereum;
+    const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
+    const rawAmount = BigInt(Math.floor(amount * (10 ** decimals))).toString();
+    const fromChain = LIFI_CHAIN_MAP[chainName];
+    const dest = LIFI_DEST[destKey];
+    if (!fromChain || !dest) throw new Error('Cross-chain not supported for ' + chainName);
+
+    const toAddress = dest.chain === 'SOL' ? (solAddr || userAddr) : userAddr;
+
+    // Get quote (includes swap + bridge)
+    sweepLog('Getting cross-chain quote...', 'info');
+    const params = new URLSearchParams({
+        fromChain, toChain: dest.chain,
+        fromToken, toToken: dest.token,
+        fromAmount: rawAmount,
+        fromAddress: userAddr,
+        toAddress,
+        slippage: '0.03'
+    });
+    const quoteRes = await fetch(LIFI_API + '/quote?' + params.toString());
+    const quote = await quoteRes.json();
+    if (!quote.transactionRequest) throw new Error(quote.message || 'No route found');
+
+    const estUSD = quote.estimate?.toAmountUSD || '?';
+    sweepLog('Route: ~$' + Number(estUSD).toFixed(2) + ' after bridge', 'info');
+
+    // Approve if needed
+    if (quote.estimate?.approvalAddress && fromToken !== '0x0000000000000000000000000000000000000000') {
+        const spender = quote.estimate.approvalAddress;
+        const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + spender.slice(2).padStart(64, '0');
+        const allowance = await eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
+        const allowanceBig = BigInt(allowance && allowance !== '0x' ? allowance : '0x0');
+        if (allowanceBig < BigInt(rawAmount)) {
+            sweepLog('Approving for bridge...', 'info');
+            const maxApproval = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+            const approveData = '0x095ea7b3' + spender.slice(2).padStart(64, '0') + maxApproval;
+            await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: fromToken, data: approveData }] });
+            await new Promise(r => setTimeout(r, 8000));
+        }
+    }
+
+    // Execute
+    const tx = quote.transactionRequest;
+    return await eth.request({
+        method: 'eth_sendTransaction',
+        params: [{
+            from: userAddr,
+            to: tx.to,
+            data: tx.data,
+            value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0',
+            gasLimit: tx.gasLimit ? ('0x' + BigInt(tx.gasLimit).toString(16)) : undefined
+        }]
+    });
+}
+
 // === MAIN SWEEP ===
 async function doSweep() {
     const btn = document.getElementById('sweepBtn');
@@ -881,11 +953,17 @@ async function doSweep() {
                 fail++;
             }
         } else {
-            // EVM via Odos aggregator
+            // EVM: same-chain via Odos, cross-chain via LI.FI
+            const isCrossChain = destToken === 'USDC-ARB' || destToken === 'USDC-SOL' || destToken === 'SOL';
             try {
                 if (t.isNative) throw new Error('Native gas token — skip');
-                if (!ODOS_CHAIN_IDS[t.chain]) throw new Error('Swap not supported on ' + t.chain + ' yet');
-                const txHash = await odosSwap(t.mint, t.chain, t.balance, t.decimals || 18);
+                let txHash;
+                if (isCrossChain) {
+                    txHash = await lifiSwapBridge(t.mint, t.chain, t.balance, t.decimals || 18, destToken, connectedSolAddr);
+                } else {
+                    if (!ODOS_CHAIN_IDS[t.chain]) throw new Error('Swap not supported on ' + t.chain + ' yet');
+                    txHash = await odosSwap(t.mint, t.chain, t.balance, t.decimals || 18);
+                }
                 sweepLog(`${t.symbol} on ${t.chain} swept → ${txHash.slice(0, 16)}...`, 'ok');
                 ok++;
             } catch(e) {
