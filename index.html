@@ -622,6 +622,15 @@ async function scan(evmAddr, solAddr) {
     // Sort by value, auto-select priced tokens under threshold
     tokens.sort((a, b) => b.usd - a.usd);
     log('--- Total: ' + tokens.length + ' tokens ---');
+    // Deduplicate tokens (same chain + contract or same chain + symbol for native)
+    const seen = new Set();
+    tokens = tokens.filter(t => {
+        const key = t.isNative ? `${t.chain}:native:${t.symbol}` : `${t.chain}:${(t.mint || t.contractAddress || t.symbol).toLowerCase()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+
     const thresh = parseFloat(document.getElementById('thresh').value);
     tokens.forEach((t, i) => { if (t.usd > 0 && t.usd <= thresh && !t.unpriced) selected.add(i); });
 
