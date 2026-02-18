@@ -64,8 +64,14 @@ export default async function handler(req, res) {
       if (!value || value === '0') continue;
 
       const decimals = parseInt(tok.decimals || '18');
-      const bal = Number(BigInt(value)) / (10 ** decimals);
-      if (bal < 0.000001) continue;
+      let bal;
+      try {
+        bal = Number(BigInt(value)) / (10 ** decimals);
+      } catch(e) {
+        // If BigInt fails, try parseFloat
+        bal = parseFloat(value) / (10 ** decimals);
+      }
+      if (!bal || bal < 0.000001 || !isFinite(bal)) continue;
 
       // Skip NFTs
       if (tok.type === 'ERC-721' || tok.type === 'ERC-1155') continue;
@@ -93,7 +99,7 @@ export default async function handler(req, res) {
         chain: chain.name,
         chainSlug: chain.slug,
         balance: bal,
-        contractAddress: (tok.address || '').toLowerCase(),
+        contractAddress: (tok.address_hash || tok.address || '').toLowerCase(),
         decimals,
         logoUrl: tok.icon_url || null
       });
@@ -146,8 +152,16 @@ export default async function handler(req, res) {
       ...FALLBACK_CHAINS.map(c => scanFallback(c).catch(() => []))
     ]);
 
-    for (const r of results) {
-      if (r.status === 'fulfilled') allTokens.push(...r.value);
+    const debug = [];
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      const label = i < CHAINS.length ? CHAINS[i].name : FALLBACK_CHAINS[i - CHAINS.length].name;
+      if (r.status === 'fulfilled') {
+        debug.push({ chain: label, found: r.value.length });
+        allTokens.push(...r.value);
+      } else {
+        debug.push({ chain: label, error: r.reason?.message || String(r.reason) });
+      }
     }
 
     // Deduplicate by chain+contract
@@ -159,7 +173,13 @@ export default async function handler(req, res) {
       return true;
     });
 
-    return res.status(200).json({ tokens: deduped, source: 'blockscout' });
+    // Count per source for debugging
+    const chainCounts = {};
+    for (const t of deduped) chainCounts[t.chain] = (chainCounts[t.chain] || 0) + 1;
+
+    // Debug: show first 10 pre-dedup
+    const preDedup = allTokens.slice(0, 10).map(t => `${t.chain}:${t.symbol}:${t.contractAddress?.slice(0,10)}`);
+    return res.status(200).json({ tokens: deduped, source: 'blockscout', chainCounts, debug, preDedup, preDedupCount: allTokens.length });
 
   } catch (err) {
     console.error('EVM token scan error:', err.message);
