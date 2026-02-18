@@ -608,15 +608,17 @@ function render() {
     const priced = tokens.filter(t => !t.unpriced && t.usd > 0);
     const total = priced.reduce((s, t) => s + t.usd, 0);
     const chainSet = new Set(tokens.map(t => t.chain));
-    const sweepable = tokens.length;
-    document.getElementById('stTokens').textContent = tokens.length;
-    document.getElementById('stValue').textContent = '$' + total.toFixed(2);
-    document.getElementById('stChains').textContent = chainSet.size;
+    const underThresh = tokens.filter(t => !t.unpriced && t.usd > 0 && t.usd <= thresh);
+    const filteredTotal = underThresh.reduce((s, t) => s + t.usd, 0);
+    const filteredChains = new Set(underThresh.map(t => t.chain));
+    document.getElementById('stTokens').textContent = underThresh.length;
+    document.getElementById('stValue').textContent = '$' + filteredTotal.toFixed(2);
+    document.getElementById('stChains').textContent = filteredChains.size;
 
-    // Chain tabs
+    // Chain tabs — only count tokens under threshold
     const chainCounts = {};
-    tokens.forEach(t => { if (!chainCounts[t.chain]) chainCounts[t.chain] = { n: 0 }; chainCounts[t.chain].n++; });
-    let tabs = `<div class="chain-tab ${chainFilter === 'all' ? 'active' : ''}" onclick="chainFilter='all';render()">All (${tokens.length})</div>`;
+    underThresh.forEach(t => { if (!chainCounts[t.chain]) chainCounts[t.chain] = { n: 0 }; chainCounts[t.chain].n++; });
+    let tabs = `<div class="chain-tab ${chainFilter === 'all' ? 'active' : ''}" onclick="chainFilter='all';render()">All (${underThresh.length})</div>`;
     for (const [c, d] of Object.entries(chainCounts))
         tabs += `<div class="chain-tab ${chainFilter === c ? 'active' : ''}" onclick="chainFilter='${c}';render()">${c} (${d.n})</div>`;
     document.getElementById('chainTabs').innerHTML = tabs;
