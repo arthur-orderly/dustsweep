@@ -726,43 +726,105 @@ async function signAndSendSolana(swapTransaction) {
     return await conn.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 });
 }
 
-// === WOOFI SWAP (EVM) ===
-const WOOFI_ROUTER = '0x4c4AF8DBc524681930a27b2F1Af5bcC8062E6fB7';
+// === ODOS SWAP (EVM) ===
+const ODOS_API = 'https://api.odos.xyz';
+const ODOS_CHAIN_IDS = {
+    'Ethereum': 1, 'Arbitrum': 42161, 'Base': 8453, 'Optimism': 10,
+    'Polygon': 137, 'BSC': 56, 'ZKsync': 324, 'Unichain': 130,
+    'Avalanche': 43114, 'Mantle': 5000
+};
 
-async function woofiSwap(fromToken, toToken, amount, decimals) {
+// Native token wrappers for output (we swap dust → native wrapped token)
+const WRAPPED_NATIVE = {
+    1: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',       // WETH
+    42161: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',     // WETH
+    8453: '0x4200000000000000000000000000000000000006',       // WETH
+    10: '0x4200000000000000000000000000000000000006',         // WETH
+    137: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',      // WPOL
+    56: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',       // WBNB
+    324: '0x5AEa5775959fBC2557Cc8789bC1bf90A239D9a91',      // WETH
+    130: '0x4200000000000000000000000000000000000006',        // WETH
+    43114: '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7',    // WAVAX
+    5000: '0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8',     // WMNT
+};
+
+// USDC addresses per chain (preferred output)
+const USDC_BY_CHAIN = {
+    1: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    42161: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    8453: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    10: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
+    137: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+    56: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+    324: '0x1d17CBcF0D6D143135aE902365D2E5e2A16538D4',
+    130: '0x078D782b760474a361dDA0AF3839290b0EF57AD6',
+    43114: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E',
+    5000: '0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9',
+};
+
+async function odosSwap(fromToken, chainName, amount, decimals) {
     const eth = window.ethereum;
-    const fromAmount = '0x' + BigInt(Math.floor(amount * (10 ** decimals))).toString(16);
-    const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
+    const chainId = ODOS_CHAIN_IDS[chainName];
+    if (!chainId) throw new Error('Odos not supported on ' + chainName);
 
-    // Check + approve
-    const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + WOOFI_ROUTER.slice(2).padStart(64, '0');
+    const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
+    const rawAmount = BigInt(Math.floor(amount * (10 ** decimals))).toString();
+    const outToken = USDC_BY_CHAIN[chainId] || WRAPPED_NATIVE[chainId];
+    if (!outToken) throw new Error('No output token for ' + chainName);
+
+    // Step 1: Get quote
+    sweepLog('Getting Odos quote...', 'info');
+    const quoteRes = await fetch(ODOS_API + '/sor/quote/v2', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            chainId,
+            inputTokens: [{ tokenAddress: fromToken, amount: rawAmount }],
+            outputTokens: [{ tokenAddress: outToken, proportion: 1 }],
+            slippageLimitPercent: 3,
+            userAddr
+        })
+    });
+    const quote = await quoteRes.json();
+    if (!quote.pathId) throw new Error(quote.detail || quote.message || 'No route found');
+
+    const outVal = quote.outValues?.[0] || 0;
+    sweepLog('Route found: ~$' + Number(outVal).toFixed(2) + ' output', 'info');
+
+    // Step 2: Assemble transaction
+    const assembleRes = await fetch(ODOS_API + '/sor/assemble', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pathId: quote.pathId, userAddr })
+    });
+    const assembled = await assembleRes.json();
+    const tx = assembled.transaction;
+    if (!tx || !tx.to) throw new Error('Failed to assemble transaction');
+
+    // Step 3: Approve if needed
+    const routerAddr = tx.to;
+    const approveAmount = '0x' + BigInt(rawAmount).toString(16);
+    const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + routerAddr.slice(2).padStart(64, '0');
     const allowance = await eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
     const allowanceBig = BigInt(allowance && allowance !== '0x' ? allowance : '0x0');
-    if (allowanceBig < BigInt(fromAmount)) {
+    if (allowanceBig < BigInt(rawAmount)) {
         sweepLog('Approving token...', 'info');
-        const approveData = '0x095ea7b3' + WOOFI_ROUTER.slice(2).padStart(64, '0') + BigInt(fromAmount).toString(16).padStart(64, '0');
+        const maxApproval = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+        const approveData = '0x095ea7b3' + routerAddr.slice(2).padStart(64, '0') + maxApproval;
         await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: fromToken, data: approveData }] });
-        await new Promise(r => setTimeout(r, 5000));
+        await new Promise(r => setTimeout(r, 8000)); // wait for approval to confirm
     }
 
-    // Query expected output for slippage protection
-    let minToAmount = '0';
-    try {
-        // querySwap(fromToken, toToken, fromAmount) → returns toAmount
-        const queryData = '0xe94803f4' + fromToken.slice(2).padStart(64, '0') + toToken.slice(2).padStart(64, '0') +
-            BigInt(fromAmount).toString(16).padStart(64, '0');
-        const queryResult = await eth.request({ method: 'eth_call', params: [{ to: WOOFI_ROUTER, data: queryData }, 'latest'] });
-        if (!queryResult || queryResult === '0x') throw new Error('Empty query result');
-        const expectedOut = BigInt(queryResult);
-        minToAmount = '0x' + (expectedOut * 98n / 100n).toString(16); // 2% slippage tolerance
-        sweepLog('Expected output: ' + (Number(expectedOut) / 1e6).toFixed(2) + ', min: ' + (Number(expectedOut * 98n / 100n) / 1e6).toFixed(2), 'info');
-    } catch(e) { log('querySwap failed, using 0 minToAmount'); }
-
-    const swapData = '0x7dc20382' + fromToken.slice(2).padStart(64, '0') + toToken.slice(2).padStart(64, '0') +
-        BigInt(fromAmount).toString(16).padStart(64, '0') + BigInt(minToAmount || '0').toString(16).padStart(64, '0') +
-        userAddr.slice(2).padStart(64, '0') + '0'.repeat(64);
-
-    return await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: WOOFI_ROUTER, data: swapData, value: '0x0' }] });
+    // Step 4: Execute swap
+    return await eth.request({
+        method: 'eth_sendTransaction',
+        params: [{
+            from: userAddr,
+            to: tx.to,
+            data: tx.data,
+            value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0'
+        }]
+    });
 }
 
 // === MAIN SWEEP ===
@@ -819,21 +881,11 @@ async function doSweep() {
                 fail++;
             }
         } else {
-            // EVM via WOOFi
-            const USDC_ADDRS = {
-                'Ethereum': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-                'Arbitrum': '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
-                'Base': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-                'Optimism': '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
-                'Polygon': '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
-                'BSC': '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
-                'Mantle': '0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9',
-            };
+            // EVM via Odos aggregator
             try {
                 if (t.isNative) throw new Error('Native gas token — skip');
-                const toToken = USDC_ADDRS[t.chain];
-                if (!toToken) throw new Error('No swap route on ' + t.chain + ' (view only)');
-                const txHash = await woofiSwap(t.mint, toToken, t.balance, t.decimals || 18);
+                if (!ODOS_CHAIN_IDS[t.chain]) throw new Error('Swap not supported on ' + t.chain + ' yet');
+                const txHash = await odosSwap(t.mint, t.chain, t.balance, t.decimals || 18);
                 sweepLog(`${t.symbol} on ${t.chain} swept → ${txHash.slice(0, 16)}...`, 'ok');
                 ok++;
             } catch(e) {
