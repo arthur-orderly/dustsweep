@@ -21,6 +21,7 @@ export default async function handler(req, res) {
     { name: 'BSC', slug: 'bsc', rpcs: ['https://bsc-dataseed.binance.org'] },
     { name: 'Mantle', slug: 'mantle', rpcs: ['https://rpc.mantle.xyz'] },
     { name: 'Merlin', slug: 'merlinchain', rpcs: ['https://rpc.merlinchain.io'] },
+    { name: 'Blast', slug: 'blast', rpcs: ['https://rpc.blast.io', 'https://rpc.ankr.com/blast'] },
   ];
 
   // Multicall3 is deployed at the same address on most EVM chains
@@ -194,6 +195,11 @@ export default async function handler(req, res) {
       { addr: '0x201eba5cc46d216ce6dc03f6a759e8e766e956ae', sym: 'USDT', dec: 6 },
       { addr: '0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111', sym: 'WETH', dec: 18 },
       { addr: '0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8', sym: 'WMNT', dec: 18 },
+    ],
+    'Blast': [
+      { addr: '0x4300000000000000000000000000000000000004', sym: 'WETH', dec: 18 },
+      { addr: '0x4300000000000000000000000000000000000003', sym: 'USDB', dec: 18 },
+      { addr: '0xb1a5700fa2358173fe465e6ea4ff52e36e88e2ad', sym: 'BLAST', dec: 18 },
     ],
     'Merlin': [
       { addr: '0x480e158395cc5b41e5584347c495584ca2caf78d', sym: 'MERL', dec: 8 },
