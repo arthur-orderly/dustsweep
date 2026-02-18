@@ -89,8 +89,10 @@ export default async function handler(req, res) {
         /\$[\d,]+/.test(name) ||
         // Homoglyph characters (Cyrillic lookalikes)
         /[\u0400-\u04FF]/.test(sym + name) ||
-        // Position value > $10M — almost certainly spam for a dust sweeper
-        (parseFloat(tok.exchange_rate) > 0 && bal * parseFloat(tok.exchange_rate) > 10_000_000);
+        // Position value > $10M = spam
+        (parseFloat(tok.exchange_rate) > 0 && bal * parseFloat(tok.exchange_rate) > 10_000_000) ||
+        // No exchange rate + huge balance = fake airdrop token
+        (!tok.exchange_rate || tok.exchange_rate === 'None' || tok.exchange_rate === null) && bal > 1_000_000;
       if (isSpam) continue;
 
       tokens.push({
