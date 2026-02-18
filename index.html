@@ -187,7 +187,7 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
         <div class="card" id="configPanel" style="display:none;">
             <div style="font-size:0.8rem;font-weight:600;color:var(--text-dim);margin-bottom:14px;text-transform:uppercase;">Sweep into</div>
             <div class="config-row">
-                <div class="config-option active" data-dest="USDC" onclick="pickToken(this,'USDC')"><div class="tn">USDC</div><div class="td">Same chain</div></div>
+                <div class="config-option active" data-dest="ETH-ARB" onclick="pickToken(this,'ETH-ARB')"><div class="tn">ETH</div><div class="td">→ Arbitrum</div></div>
                 <div class="config-option" data-dest="USDC-ARB" onclick="pickToken(this,'USDC-ARB')"><div class="tn">USDC</div><div class="td">→ Arbitrum</div></div>
                 <div class="config-option" data-dest="USDC-SOL" onclick="pickToken(this,'USDC-SOL')"><div class="tn">USDC</div><div class="td">→ Solana</div></div>
                 <div class="config-option" data-dest="SOL" onclick="pickToken(this,'SOL')"><div class="tn">SOL</div><div class="td">→ Solana</div></div>
@@ -214,7 +214,7 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
 <script>
 // === STATE ===
 const COLORS = ['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD','#98D8C8','#F7DC6F','#BB8FCE','#85C1E9','#F0B27A','#82E0AA'];
-let tokens = [], selected = new Set(), destToken = 'USDC', chainFilter = 'all', solRpc = null;
+let tokens = [], selected = new Set(), destToken = 'ETH-ARB', chainFilter = 'all', solRpc = null;
 let connectedSolAddr = null, connectedEvmAddr = null;
 
 // === DEBUG ===
@@ -736,7 +736,7 @@ function render() {
     document.getElementById('smTok').textContent = selTokens.length;
     document.getElementById('smGross').textContent = '$' + gross.toFixed(2);
     document.getElementById('smFee').textContent = 'Free (beta)';
-    const destLabel = { 'USDC': 'USDC (same chain)', 'USDC-ARB': 'USDC on Arbitrum', 'USDC-SOL': 'USDC on Solana', 'SOL': 'SOL on Solana' }[destToken] || destToken;
+    const destLabel = { 'ETH-ARB': 'ETH on Arbitrum', 'USDC-ARB': 'USDC on Arbitrum', 'USDC-SOL': 'USDC on Solana', 'SOL': 'SOL on Solana' }[destToken] || destToken;
     document.getElementById('smNet').textContent = '~$' + (gross - fee).toFixed(2) + ' → ' + destLabel;
     document.getElementById('sweepBtn').disabled = selTokens.length === 0;
 }
@@ -908,6 +908,7 @@ const LIFI_CHAIN_MAP = {
     'ZKsync': 'ERA', 'Scroll': 'SCL', 'Gnosis': 'GNO', 'Mantle': 'MNT',
 };
 const LIFI_DEST = {
+    'ETH-ARB':  { chain: 'ARB', token: '0x0000000000000000000000000000000000000000' },
     'USDC-ARB': { chain: 'ARB', token: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' },
     'USDC-SOL': { chain: 'SOL', token: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
     'SOL':      { chain: 'SOL', token: '11111111111111111111111111111111' },
@@ -1024,7 +1025,7 @@ async function doSweep() {
             }
         } else {
             // EVM: same-chain via Odos, cross-chain via LI.FI
-            const isCrossChain = destToken === 'USDC-ARB' || destToken === 'USDC-SOL' || destToken === 'SOL';
+            const isCrossChain = destToken === 'ETH-ARB' || destToken === 'USDC-ARB' || destToken === 'USDC-SOL' || destToken === 'SOL';
             try {
                 if (t.isNative) throw new Error('Native gas token — skip');
                 let txHash;
