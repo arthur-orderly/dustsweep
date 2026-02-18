@@ -165,6 +165,7 @@ export default async function handler(req, res) {
       { addr: '0x82af49447d8a07e3bd95bd0d56f35241523fbab1', sym: 'WETH', dec: 18 },
       { addr: '0x912ce59144191c1204e64559fe8253a0e49e6548', sym: 'ARB', dec: 18 },
       { addr: '0x4e200fe2f3efb977d5fd9c430a41531fb04d97b8', sym: 'ORDER', dec: 18 },
+      { addr: '0x59062301fb510f4ea2417b67404cb16d31e604ba', sym: 'LOGX', dec: 18 },
     ],
     'Base': [
       { addr: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', sym: 'USDC', dec: 6 },
