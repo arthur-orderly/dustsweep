@@ -460,6 +460,12 @@ async function scan(evmAddr, solAddr) {
             { name: 'Merlin', rpcs: ['https://rpc.merlinchain.io'], sym: 'BTC', cgId: 'bitcoin' },
             { name: 'Blast', rpcs: ['https://rpc.blast.io', 'https://rpc.ankr.com/blast'], sym: 'ETH', cgId: 'ethereum' },
             { name: 'Avalanche', rpcs: ['https://api.avax.network/ext/bc/C/rpc', 'https://1rpc.io/avax/c'], sym: 'AVAX', cgId: 'avalanche-2' },
+            { name: 'Gnosis', rpcs: ['https://rpc.gnosischain.com'], sym: 'xDAI', cgId: 'xdai' },
+            { name: 'Scroll', rpcs: ['https://rpc.scroll.io'], sym: 'ETH', cgId: 'ethereum' },
+            { name: 'ZKsync', rpcs: ['https://mainnet.era.zksync.io'], sym: 'ETH', cgId: 'ethereum' },
+            { name: 'Unichain', rpcs: ['https://mainnet.unichain.org'], sym: 'ETH', cgId: 'ethereum' },
+            { name: 'Celo', rpcs: ['https://forno.celo.org'], sym: 'CELO', cgId: 'celo' },
+            { name: 'Arbitrum Nova', rpcs: ['https://nova.arbitrum.io/rpc'], sym: 'ETH', cgId: 'ethereum' },
         ];
         let cgPrices = {};
         try {

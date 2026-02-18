@@ -19,6 +19,12 @@ export default async function handler(req, res) {
     { name: 'Polygon', slug: 'polygon', blockscout: 'https://polygon.blockscout.com' },
     { name: 'BSC', slug: 'bsc', blockscout: 'https://bsc.blockscout.com' },
     { name: 'Blast', slug: 'blast', blockscout: 'https://blast.blockscout.com' },
+    { name: 'Gnosis', slug: 'gnosis', blockscout: 'https://gnosis.blockscout.com' },
+    { name: 'Scroll', slug: 'scroll', blockscout: 'https://scroll.blockscout.com' },
+    { name: 'ZKsync', slug: 'zksync', blockscout: 'https://zksync.blockscout.com' },
+    { name: 'Unichain', slug: 'unichain', blockscout: 'https://unichain.blockscout.com' },
+    { name: 'Celo', slug: 'celo', blockscout: 'https://celo.blockscout.com' },
+    { name: 'Arbitrum Nova', slug: 'arbitrum-nova', blockscout: 'https://arbitrum-nova.blockscout.com' },
   ];
 
   // Chains without Blockscout — fall back to known token list + RPC
