@@ -89,8 +89,9 @@ export default async function handler(req, res) {
         /\$[\d,]+/.test(name) ||
         // Homoglyph characters (Cyrillic lookalikes)
         /[\u0400-\u04FF]/.test(sym + name) ||
-        // Unreasonably large balances (>1e30) — usually spam airdrops
-        bal > 1e30;
+        // Balance exceeds circulating market cap (impossible = spam airdrop)
+        (tok.circulating_market_cap && parseFloat(tok.circulating_market_cap) > 0 &&
+         bal * (parseFloat(tok.exchange_rate) || 0) > parseFloat(tok.circulating_market_cap) * 0.1);
       if (isSpam) continue;
 
       tokens.push({
@@ -177,9 +178,7 @@ export default async function handler(req, res) {
     const chainCounts = {};
     for (const t of deduped) chainCounts[t.chain] = (chainCounts[t.chain] || 0) + 1;
 
-    // Debug: show first 10 pre-dedup
-    const preDedup = allTokens.slice(0, 10).map(t => `${t.chain}:${t.symbol}:${t.contractAddress?.slice(0,10)}`);
-    return res.status(200).json({ tokens: deduped, source: 'blockscout', chainCounts, debug, preDedup, preDedupCount: allTokens.length });
+    return res.status(200).json({ tokens: deduped, source: 'blockscout' });
 
   } catch (err) {
     console.error('EVM token scan error:', err.message);
