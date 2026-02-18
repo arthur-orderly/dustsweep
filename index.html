@@ -125,15 +125,19 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
 <header class="header">
     <div class="logo"><div class="logo-icon">🧹</div>Dust<span>Sweep</span></div>
     <div style="display:flex;align-items:center;gap:16px;">
-        <div class="powered-by">Solana via Jupiter · EVM via WOOFi</div>
-        <button class="btn" id="disconnectBtn" onclick="disconnect()" style="display:none;background:transparent;border:1px solid var(--border);color:var(--text-dim);padding:8px 14px;font-size:0.75rem;">Disconnect</button>
+        <div class="powered-by">Solana via Jupiter · EVM via Odos</div>
+        <div id="walletDisplay" style="display:none;font-size:0.7rem;text-align:right;line-height:1.6;">
+            <div id="evmWalletLine" style="display:none;">🦊 <span id="evmAddrShort"></span> <a href="#" onclick="disconnectEVM();return false" style="color:var(--text-dim);text-decoration:none;">✕</a></div>
+            <div id="solWalletLine" style="display:none;">👻 <span id="solAddrShort"></span> <a href="#" onclick="disconnectSol();return false" style="color:var(--text-dim);text-decoration:none;">✕</a></div>
+        </div>
+        <button class="btn" id="addWalletBtn" style="display:none;background:transparent;border:1px solid var(--border);color:var(--text-dim);padding:6px 12px;font-size:0.7rem;" onclick="showAddWallet()">+ Add Wallet</button>
         <button class="btn" id="connectBtn" onclick="connectSolana()">Connect Wallet</button>
     </div>
 </header>
 <main class="main">
     <div class="hero">
         <h1>Sweep Your Dust</h1>
-        <p>Find forgotten tokens in your wallet. Swap them into SOL, USDC, ETH, or USDT in one click.</p>
+        <p>Find forgotten tokens across all your wallets. Swap and bridge them into one asset, one chain.</p>
     </div>
 
     <div id="preConnect">
@@ -183,10 +187,10 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
         <div class="card" id="configPanel" style="display:none;">
             <div style="font-size:0.8rem;font-weight:600;color:var(--text-dim);margin-bottom:14px;text-transform:uppercase;">Sweep into</div>
             <div class="config-row">
-                <div class="config-option active" onclick="pickToken(this,'USDC')"><div class="tn">USDC</div><div class="td">Same chain</div></div>
-                <div class="config-option" onclick="pickToken(this,'USDC-ARB')"><div class="tn">USDC</div><div class="td">→ Arbitrum</div></div>
-                <div class="config-option" onclick="pickToken(this,'USDC-SOL')"><div class="tn">USDC</div><div class="td">→ Solana</div></div>
-                <div class="config-option" onclick="pickToken(this,'SOL')"><div class="tn">SOL</div><div class="td">→ Solana</div></div>
+                <div class="config-option active" data-dest="USDC" onclick="pickToken(this,'USDC')"><div class="tn">USDC</div><div class="td">Same chain</div></div>
+                <div class="config-option" data-dest="USDC-ARB" onclick="pickToken(this,'USDC-ARB')"><div class="tn">USDC</div><div class="td">→ Arbitrum</div></div>
+                <div class="config-option" data-dest="USDC-SOL" onclick="pickToken(this,'USDC-SOL')"><div class="tn">USDC</div><div class="td">→ Solana</div></div>
+                <div class="config-option" data-dest="SOL" onclick="pickToken(this,'SOL')"><div class="tn">SOL</div><div class="td">→ Solana</div></div>
 
             </div>
         </div>
@@ -238,25 +242,91 @@ async function fetchT(url, opts = {}, ms = 15000) {
 function withTimeout(promise, ms, label) {
     return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error(label + ' timed out')), ms))]);
 }
-function showPost(display) {
-    document.getElementById('connectBtn').textContent = display;
-    document.getElementById('connectBtn').classList.add('connected');
+function showPost() {
     document.getElementById('preConnect').style.display = 'none';
     document.getElementById('postConnect').style.display = 'block';
 }
 
-// === DISCONNECT ===
-async function disconnect() {
+// === WALLET DISPLAY ===
+function updateWalletDisplay() {
+    const wd = document.getElementById('walletDisplay');
+    const evmLine = document.getElementById('evmWalletLine');
+    const solLine = document.getElementById('solWalletLine');
+    const addBtn = document.getElementById('addWalletBtn');
+    const connectBtn = document.getElementById('connectBtn');
+
+    if (connectedEvmAddr) {
+        document.getElementById('evmAddrShort').textContent = connectedEvmAddr.slice(0, 6) + '...' + connectedEvmAddr.slice(-4);
+        evmLine.style.display = 'block';
+    } else {
+        evmLine.style.display = 'none';
+    }
+    if (connectedSolAddr) {
+        document.getElementById('solAddrShort').textContent = connectedSolAddr.slice(0, 4) + '...' + connectedSolAddr.slice(-4);
+        solLine.style.display = 'block';
+    } else {
+        solLine.style.display = 'none';
+    }
+
+    const hasAny = connectedEvmAddr || connectedSolAddr;
+    const hasBoth = connectedEvmAddr && connectedSolAddr;
+    wd.style.display = hasAny ? 'block' : 'none';
+    addBtn.style.display = (hasAny && !hasBoth) ? 'inline-block' : 'none';
+    connectBtn.style.display = hasAny ? 'none' : 'inline-block';
+
+    // Update destination options based on connected wallets
+    updateDestOptions();
+}
+
+function updateDestOptions() {
+    const hasEvm = !!connectedEvmAddr;
+    const hasSol = !!connectedSolAddr;
+    // Show/hide cross-chain-to-Solana options based on Solana wallet
+    document.querySelectorAll('.config-option').forEach(el => {
+        const token = el.getAttribute('data-dest');
+        if (!token) return;
+        if ((token === 'USDC-SOL' || token === 'SOL') && !hasSol && hasEvm) {
+            el.style.opacity = '0.3';
+            el.title = 'Connect a Solana wallet first';
+        } else {
+            el.style.opacity = '1';
+            el.title = '';
+        }
+    });
+}
+
+function showAddWallet() {
+    if (!connectedSolAddr) connectSolana();
+    else if (!connectedEvmAddr) connectEVM();
+}
+
+async function disconnectEVM() {
+    connectedEvmAddr = null;
+    tokens = tokens.filter(t => t.chain === 'Solana');
+    selected.clear();
+    updateWalletDisplay();
+    if (!connectedSolAddr) {
+        document.getElementById('preConnect').style.display = 'block';
+        document.getElementById('postConnect').style.display = 'none';
+    } else {
+        render();
+    }
+    log('EVM wallet disconnected');
+}
+
+async function disconnectSol() {
     try { const sol = window?.phantom?.solana || window?.solana; if (sol) await sol.disconnect(); } catch(e) {}
-    connectedSolAddr = null; connectedEvmAddr = null;
-    tokens = []; selected.clear();
-    document.getElementById('connectBtn').textContent = 'Connect Wallet';
-    document.getElementById('connectBtn').classList.remove('connected');
-    document.getElementById('disconnectBtn').style.display = 'none';
-    document.getElementById('preConnect').style.display = 'block';
-    document.getElementById('postConnect').style.display = 'none';
-    document.getElementById('sweepLog').innerHTML = '';
-    log('Disconnected');
+    connectedSolAddr = null;
+    tokens = tokens.filter(t => t.chain !== 'Solana');
+    selected.clear();
+    updateWalletDisplay();
+    if (!connectedEvmAddr) {
+        document.getElementById('preConnect').style.display = 'block';
+        document.getElementById('postConnect').style.display = 'none';
+    } else {
+        render();
+    }
+    log('Solana wallet disconnected');
 }
 
 // === WALLET CONNECT ===
@@ -287,9 +357,9 @@ async function connectSolana() {
         }
     }
     connectedSolAddr = addr;
-    document.getElementById('disconnectBtn').style.display = 'inline-block';
-    showPost(addr.slice(0, 4) + '...' + addr.slice(-4));
-    await scan(null, addr);
+    updateWalletDisplay();
+    showPost();
+    await scan(connectedEvmAddr, addr);
 }
 
 async function connectEVM() {
@@ -320,9 +390,9 @@ async function connectEVM() {
         const addr = accts[0];
         log('✅ EVM: ' + addr);
         connectedEvmAddr = addr;
-        document.getElementById('disconnectBtn').style.display = 'inline-block';
-        showPost(addr.slice(0, 6) + '...' + addr.slice(-4));
-        await scan(addr, null);
+        updateWalletDisplay();
+        showPost();
+        await scan(addr, connectedSolAddr);
     } catch(e) { alert('EVM connect failed: ' + e.message); }
 }
 
