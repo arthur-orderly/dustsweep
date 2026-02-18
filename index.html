@@ -621,9 +621,10 @@ function render() {
         tabs += `<div class="chain-tab ${chainFilter === c ? 'active' : ''}" onclick="chainFilter='${c}';render()">${c} (${d.n})</div>`;
     document.getElementById('chainTabs').innerHTML = tabs;
 
-    // Token list
+    // Token list — filter by chain AND threshold
     const filtered = tokens.map((t, i) => ({ ...t, idx: i })).filter(t =>
-        chainFilter === 'all' || t.chain === chainFilter);
+        (chainFilter === 'all' || t.chain === chainFilter) &&
+        (t.unpriced || t.usd === 0 || t.usd <= thresh));
     let html = '';
     for (const t of filtered) {
         const sel = selected.has(t.idx);
