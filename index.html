@@ -766,7 +766,7 @@ function render() {
     const destLabel = { 'ETH-ARB': 'ETH on Arbitrum', 'USDC-ARB': 'USDC on Arbitrum', 'USDC-SOL': 'USDC on Solana', 'SOL': 'SOL on Solana' }[destToken] || destToken;
     document.getElementById('smNet').textContent = '~$' + (gross - fee).toFixed(2) + ' → ' + destLabel;
     // Show appropriate button based on phase
-    const evmSel = selTokens.filter(t => t.chain !== 'Solana' && !t.isNative && t.isErc20);
+    const evmSel = selTokens.filter(t => t.chain !== 'Solana' && !t.isNative);
     const hasBatchChains = evmSel.some(t => BATCH_SWEEPER[t.chain]);
     const approveBtn = document.getElementById('approveBtn');
     const sweepBtn = document.getElementById('sweepBtn');
@@ -1143,7 +1143,7 @@ async function doApproveAll() {
     sweepPhase = 'approving';
 
     const selTokens = tokens.filter((_, i) => selected.has(i));
-    const evmTokens = selTokens.filter(t => t.chain !== 'Solana' && !t.isNative && t.isErc20 && BATCH_SWEEPER[t.chain]);
+    const evmTokens = selTokens.filter(t => t.chain !== 'Solana' && !t.isNative && BATCH_SWEEPER[t.chain]);
 
     if (evmTokens.length === 0) {
         sweepLog('No BatchSweeper-compatible tokens selected', 'fail');
