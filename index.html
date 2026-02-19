@@ -909,6 +909,85 @@ async function odosSwap(fromToken, chainName, amount, decimals) {
     });
 }
 
+// === UNISWAP V3 FALLBACK ===
+const UNI_ROUTER = {
+    'Ethereum': '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45',
+    'Arbitrum': '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45',
+    'Optimism': '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45',
+    'Polygon': '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45',
+    'Base': '0x2626664c2603336E57B271c5C0b26F421741e481',
+    'BSC': '0xB971eF87ede563556b2ED4b1C0b0019111Dd85d2',
+};
+const WETH_ADDR = {
+    'Ethereum': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    'Arbitrum': '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
+    'Optimism': '0x4200000000000000000000000000000000000006',
+    'Base': '0x4200000000000000000000000000000000000006',
+    'Polygon': '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
+    'BSC': '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
+};
+
+// Returns { router, approveTo, txData } or throws
+async function uniswapQuote(fromToken, chainName, amount, decimals) {
+    const router = UNI_ROUTER[chainName];
+    const weth = WETH_ADDR[chainName];
+    if (!router || !weth) throw new Error('Uniswap not available on ' + chainName);
+
+    const eth = window.ethereum;
+    const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
+    const rawAmount = BigInt(Math.floor(amount * (10 ** decimals)));
+
+    // Try fee tiers: 10000 (1%), 3000 (0.3%), 500 (0.05%)
+    // exactInputSingle selector: 0x04e45aaf
+    // params: (tokenIn, tokenOut, fee, recipient, amountIn, amountOutMinimum, sqrtPriceLimitX96)
+    const feeTiers = [10000, 3000, 500, 100];
+    let bestFee = null;
+
+    for (const fee of feeTiers) {
+        try {
+            // Use Quoter V2 to check if pool exists: quoteExactInputSingle
+            // QuoterV2: 0x61fFE014bA17989E743c5F6cB21bF9697530B21e (same on most chains)
+            const quoterAddr = '0x61fFE014bA17989E743c5F6cB21bF9697530B21e';
+            // quoteExactInputSingle((tokenIn, tokenOut, amountIn, fee, sqrtPriceLimitX96))
+            // selector: 0xc6a5026a
+            const tokenInPad = fromToken.slice(2).padStart(64, '0');
+            const tokenOutPad = weth.slice(2).padStart(64, '0');
+            const amountPad = rawAmount.toString(16).padStart(64, '0');
+            const feePad = fee.toString(16).padStart(64, '0');
+            const zeropad = ''.padStart(64, '0');
+            // Encode struct as ABI: offset(0x20) + tokenIn + tokenOut + amountIn + fee + sqrtPriceLimitX96
+            const calldata = '0xc6a5026a' +
+                '0000000000000000000000000000000000000000000000000000000000000020' +
+                tokenInPad + tokenOutPad + amountPad + feePad + zeropad;
+
+            const result = await eth.request({ method: 'eth_call', params: [{ to: quoterAddr, data: calldata }, 'latest'] });
+            const outAmount = BigInt(result.slice(0, 66));
+            if (outAmount > 0n) {
+                bestFee = fee;
+                break;
+            }
+        } catch(e) { /* try next fee tier */ }
+    }
+
+    if (!bestFee) throw new Error('No Uniswap pool found');
+
+    // Encode exactInputSingle call
+    const deadline = '0x' + (BigInt(Math.floor(Date.now() / 1000)) + 1800n).toString(16).padStart(64, '0');
+    const tokenInPad = fromToken.slice(2).padStart(64, '0');
+    const tokenOutPad = weth.slice(2).padStart(64, '0');
+    const feePad = bestFee.toString(16).padStart(64, '0');
+    const recipientPad = userAddr.slice(2).padStart(64, '0');
+    const amountPad = rawAmount.toString(16).padStart(64, '0');
+    const zeropad = ''.padStart(64, '0');
+
+    // exactInputSingle((tokenIn, tokenOut, fee, recipient, amountIn, amountOutMinimum, sqrtPriceLimitX96))
+    const swapData = '0x04e45aaf' +
+        tokenInPad + tokenOutPad + feePad + recipientPad +
+        amountPad + zeropad + zeropad;
+
+    return { router, approveTo: router, txData: swapData, rawAmount: rawAmount.toString(), fee: bestFee };
+}
+
 // === LI.FI CROSS-CHAIN SWAP+BRIDGE ===
 const LIFI_API = 'https://li.quest/v1';
 const LIFI_CHAIN_MAP = {
@@ -1044,28 +1123,49 @@ async function doSweep() {
                     t._lifiQuote = quote; // cache for phase 2
                     spender = quote.estimate?.approvalAddress;
                 } else {
-                    if (!ODOS_CHAIN_IDS[t.chain]) { sweepLog(`${t.symbol}: not supported on ${t.chain}`, 'fail'); fail++; continue; }
-                    // Get Odos quote + assemble to find router address
-                    const chainId = ODOS_CHAIN_IDS[t.chain];
                     const fromToken = t.mint || t.contractAddress;
-                    const quoteRes = await fetch(ODOS_API + '/sor/quote/v2', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            chainId, inputTokens: [{ tokenAddress: fromToken, amount: rawAmount }],
-                            outputTokens: [{ tokenAddress: '0x0000000000000000000000000000000000000000', proportion: 1 }],
-                            userAddr
-                        })
-                    });
-                    const quote = await quoteRes.json();
-                    if (!quote.pathId) { sweepLog(`${t.symbol}: ${quote.detail || quote.message || 'No route'}`, 'fail'); fail++; continue; }
-                    const assembleRes = await fetch(ODOS_API + '/sor/assemble', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ pathId: quote.pathId, userAddr })
-                    });
-                    const assembled = await assembleRes.json();
-                    if (!assembled.transaction?.to) { sweepLog(`${t.symbol}: failed to assemble`, 'fail'); fail++; continue; }
-                    t._odosTx = assembled.transaction; // cache for phase 2
-                    spender = assembled.transaction.to;
+                    let gotOdos = false;
+                    // Try Odos first
+                    if (ODOS_CHAIN_IDS[t.chain]) {
+                        try {
+                            const chainId = ODOS_CHAIN_IDS[t.chain];
+                            const quoteRes = await fetch(ODOS_API + '/sor/quote/v2', {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    chainId, inputTokens: [{ tokenAddress: fromToken, amount: rawAmount }],
+                                    outputTokens: [{ tokenAddress: '0x0000000000000000000000000000000000000000', proportion: 1 }],
+                                    userAddr
+                                })
+                            });
+                            const quote = await quoteRes.json();
+                            if (quote.pathId) {
+                                const assembleRes = await fetch(ODOS_API + '/sor/assemble', {
+                                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ pathId: quote.pathId, userAddr })
+                                });
+                                const assembled = await assembleRes.json();
+                                if (assembled.transaction?.to) {
+                                    t._odosTx = assembled.transaction;
+                                    spender = assembled.transaction.to;
+                                    t._swapVia = 'odos';
+                                    gotOdos = true;
+                                }
+                            }
+                        } catch(e) { /* fall through to Uniswap */ }
+                    }
+                    // Fallback: Uniswap V3
+                    if (!gotOdos) {
+                        try {
+                            sweepLog(`${t.symbol}: no Odos route, trying Uniswap...`, 'info');
+                            const uni = await uniswapQuote(fromToken, t.chain, t.balance, t.decimals || 18);
+                            t._uniTx = uni;
+                            spender = uni.approveTo;
+                            t._swapVia = 'uniswap';
+                        } catch(e2) {
+                            sweepLog(`${t.symbol}: no route on Odos or Uniswap`, 'fail');
+                            fail++; continue;
+                        }
+                    }
                 }
 
                 // Check allowance and approve if needed
@@ -1112,6 +1212,10 @@ async function doSweep() {
                             from: userAddr, to: tx.to, data: tx.data,
                             value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0',
                             gasLimit: tx.gasLimit ? ('0x' + BigInt(tx.gasLimit).toString(16)) : undefined
+                        }]});
+                    } else if (t._swapVia === 'uniswap' && t._uniTx) {
+                        txHash = await eth.request({ method: 'eth_sendTransaction', params: [{
+                            from: userAddr, to: t._uniTx.router, data: t._uniTx.txData, value: '0x0'
                         }]});
                     } else if (t._odosTx) {
                         const tx = t._odosTx;
