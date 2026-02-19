@@ -1531,26 +1531,47 @@ async function doSweep() {
             const results = await Promise.allSettled(approvalPromises);
             await new Promise(r => setTimeout(r, 6000)); // wait for approvals
 
-            // Fire all swaps
+            // Group fallback swaps by chain for proper chain switching
+            const fallbackByChain = {};
             for (const r of results) {
                 if (r.status !== 'fulfilled') { fail++; continue; }
                 const { token: t, swapInfo } = r.value;
-                step++;
-                fill.style.width = (step / total * 100) + '%';
-                try {
-                    let txHash;
-                    if (swapInfo.type === 'lifi') {
-                        const tx = swapInfo.tx;
-                        txHash = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: tx.to, data: tx.data, value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0' }]});
-                    } else if (swapInfo.type === 'uniswap') {
-                        txHash = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: swapInfo.tx.router, data: swapInfo.tx.txData, value: '0x0' }]});
-                    } else {
-                        const tx = swapInfo.tx;
-                        txHash = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: tx.to, data: tx.data, value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0' }]});
-                    }
-                    sweepLog(`${t.symbol} swept → ${txHash.slice(0, 16)}...`, 'ok');
-                    ok++;
-                } catch(e) { sweepLog(`${t.symbol}: ${e.message}`, 'fail'); fail++; }
+                if (!fallbackByChain[t.chain]) fallbackByChain[t.chain] = [];
+                fallbackByChain[t.chain].push({ token: t, swapInfo });
+            }
+
+            for (const [chainName, items] of Object.entries(fallbackByChain)) {
+                // Switch chain
+                const targetChainId = ODOS_CHAIN_IDS[chainName] || BATCH_SWEEPER_CHAINS[chainName];
+                if (targetChainId) {
+                    try {
+                        const currentChain = await eth.request({ method: 'eth_chainId' });
+                        if (parseInt(currentChain, 16) !== targetChainId) {
+                            sweepLog(`Switching to ${chainName}...`, 'info');
+                            await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x' + targetChainId.toString(16) }] });
+                            await new Promise(r => setTimeout(r, 1000));
+                        }
+                    } catch(e) { sweepLog(`Chain switch to ${chainName} failed: ${e.message}`, 'fail'); }
+                }
+
+                for (const { token: t, swapInfo } of items) {
+                    step++;
+                    fill.style.width = (step / total * 100) + '%';
+                    try {
+                        let txHash;
+                        if (swapInfo.type === 'lifi') {
+                            const tx = swapInfo.tx;
+                            txHash = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: tx.to, data: tx.data, value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0' }]});
+                        } else if (swapInfo.type === 'uniswap') {
+                            txHash = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: swapInfo.tx.router, data: swapInfo.tx.txData, value: '0x0' }]});
+                        } else {
+                            const tx = swapInfo.tx;
+                            txHash = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: tx.to, data: tx.data, value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0' }]});
+                        }
+                        sweepLog(`${t.symbol} on ${chainName} swept → ${txHash.slice(0, 16)}...`, 'ok');
+                        ok++;
+                    } catch(e) { sweepLog(`${t.symbol}: ${e.message}`, 'fail'); fail++; }
+                }
             }
         }
     }
