@@ -1331,6 +1331,10 @@ async function doSweep() {
     const skippedNative = viable.filter(t => t.chain !== 'Solana' && t.isNative);
     if (skippedNative.length) sweepLog(`Skipping ${skippedNative.length} native gas token(s)`, 'info');
 
+    // Debug: log all tokens being processed
+    sweepLog(`\n📋 Processing: ${viable.length} tokens (${evmTokens.length} EVM, ${solTokens.length} Solana, ${skippedNative.length} native-skip)`, 'info');
+    evmTokens.forEach(t => sweepLog(`  EVM: ${t.symbol} on ${t.chain} | mint=${(t.mint||t.contractAddress||'?').slice(0,10)}... | $${t.usd.toFixed(2)}`, 'info'));
+
     const total = solTokens.length + evmTokens.length;
     let ok = 0, fail = 0, step = 0;
     const isCrossChain = destToken === 'ETH-ARB' || destToken === 'USDC-ARB' || destToken === 'USDC-SOL' || destToken === 'SOL';
@@ -1349,6 +1353,9 @@ async function doSweep() {
         const fallbackTokens = isCrossChain
             ? evmTokens.filter(t => !BATCH_SWEEPER[t.chain] || t.chain !== destChainName)
             : evmTokens.filter(t => !BATCH_SWEEPER[t.chain]);
+        sweepLog(`\n🔀 Routing: ${batchTokens.length} via BatchSweeper, ${fallbackTokens.length} via fallback (LI.FI/Odos)`, 'info');
+        batchTokens.forEach(t => sweepLog(`  Batch: ${t.symbol} on ${t.chain}`, 'info'));
+        fallbackTokens.forEach(t => sweepLog(`  Fallback: ${t.symbol} on ${t.chain}`, 'info'));
 
         // === BATCH SWEEPER FLOW (1 tx per chain) ===
         if (batchTokens.length > 0) {
