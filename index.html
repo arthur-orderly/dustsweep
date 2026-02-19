@@ -219,6 +219,7 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
 const COLORS = ['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD','#98D8C8','#F7DC6F','#BB8FCE','#85C1E9','#F0B27A','#82E0AA'];
 let tokens = [], selected = new Set(), destToken = 'ETH-ARB', chainFilter = 'all', solRpc = null;
 let connectedSolAddr = null, connectedEvmAddr = null;
+let evmProvider = null; // Global EVM provider (MetaMask, Rabby, etc.)
 let sweepPhase = 'idle'; // idle | approving | approved | sweeping
 
 // === BATCH SWEEPER CONTRACT ===
@@ -405,6 +406,7 @@ async function connectEVM() {
         const accts = await withTimeout(eth.request({ method: 'eth_requestAccounts' }), 30000, 'EVM');
         const addr = accts[0];
         log('✅ EVM: ' + addr);
+        evmProvider = eth; // Save globally for all EVM operations
         connectedEvmAddr = addr;
         updateWalletDisplay();
         showPost();
@@ -802,7 +804,7 @@ function render() {
 }
 
 async function checkApprovalCount(evmTokens) {
-    const eth = window.ethereum;
+    const eth = evmProvider || window.ethereum;
     if (!eth) return { needed: evmTokens.length, total: evmTokens.length };
     try {
         const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
@@ -918,7 +920,7 @@ const USDC_BY_CHAIN = {
 };
 
 async function odosSwap(fromToken, chainName, amount, decimals) {
-    const eth = window.ethereum;
+    const eth = evmProvider || window.ethereum;
     const chainId = ODOS_CHAIN_IDS[chainName];
     if (!chainId) throw new Error('Odos not supported on ' + chainName);
 
@@ -1006,7 +1008,7 @@ async function uniswapQuote(fromToken, chainName, amount, decimals) {
     const weth = WETH_ADDR[chainName];
     if (!router || !weth) throw new Error('Uniswap not available on ' + chainName);
 
-    const eth = window.ethereum;
+    const eth = evmProvider || window.ethereum;
     const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
     const rawAmount = BigInt(Math.floor(amount * (10 ** decimals)));
 
@@ -1076,7 +1078,7 @@ const LIFI_DEST = {
 };
 
 async function lifiSwapBridge(fromToken, chainName, amount, decimals, destKey, solAddr) {
-    const eth = window.ethereum;
+    const eth = evmProvider || window.ethereum;
     const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
     const rawAmount = BigInt(Math.floor(amount * (10 ** decimals))).toString();
     const fromChain = LIFI_CHAIN_MAP[chainName];
@@ -1158,7 +1160,7 @@ async function doApproveAll() {
         sweepPhase = 'idle'; render(); return;
     }
 
-    const eth = window.ethereum;
+    const eth = evmProvider || window.ethereum;
     const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
 
     // Check which tokens need approval and fire ALL approvals in parallel
@@ -1341,7 +1343,7 @@ async function doSweep() {
 
     // ===== EVM TOKENS =====
     if (evmTokens.length > 0) {
-        const eth = window.ethereum;
+        const eth = evmProvider || window.ethereum;
         const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
 
         // Split into BatchSweeper-eligible and fallback tokens
