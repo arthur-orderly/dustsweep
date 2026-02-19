@@ -998,32 +998,155 @@ async function doSweep() {
         btn.disabled = false; bar.style.display = 'none'; return;
     }
 
-    // Filter out tokens with near-zero amounts that Jupiter can't route
     const MIN_AMOUNT = 0.000001;
     const viable = swappable.filter(t => t.balance >= MIN_AMOUNT);
     if (viable.length < swappable.length) {
         sweepLog(`Skipping ${swappable.length - viable.length} tokens with near-zero balance`, 'info');
     }
 
-    let ok = 0, fail = 0;
-    const total = viable.length;
+    // Separate Solana (no approval needed) from EVM tokens
+    const solTokens = viable.filter(t => t.chain === 'Solana');
+    const evmTokens = viable.filter(t => t.chain !== 'Solana' && !t.isNative);
+    const skippedNative = viable.filter(t => t.chain !== 'Solana' && t.isNative);
+    if (skippedNative.length) sweepLog(`Skipping ${skippedNative.length} native gas token(s)`, 'info');
 
-    for (let i = 0; i < viable.length; i++) {
-        const t = viable[i];
-        fill.style.width = ((i + 1) / total * 100) + '%';
-        btn.innerHTML = `🧹 ${i + 1}/${total}: ${t.symbol}...`;
+    const total = solTokens.length + evmTokens.length;
+    let ok = 0, fail = 0, step = 0;
+    const isCrossChain = destToken === 'ETH-ARB' || destToken === 'USDC-ARB' || destToken === 'USDC-SOL' || destToken === 'SOL';
 
-        if (t.chain === 'Solana') {
+    // ===== PHASE 1: BATCH APPROVE ALL EVM TOKENS =====
+    if (evmTokens.length > 0) {
+        sweepLog(`\n📝 PHASE 1: Approving ${evmTokens.length} tokens — confirm each in wallet`, 'info');
+        const approvedTokens = [];
+        for (let i = 0; i < evmTokens.length; i++) {
+            const t = evmTokens[i];
+            btn.innerHTML = `📝 Approve ${i + 1}/${evmTokens.length}: ${t.symbol}`;
+            try {
+                const eth = window.ethereum;
+                const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
+                const rawAmount = BigInt(Math.floor(t.balance * (10 ** (t.decimals || 18)))).toString();
+
+                // Determine spender address
+                let spender;
+                if (isCrossChain) {
+                    const fromChain = LIFI_CHAIN_MAP[t.chain];
+                    const dest = LIFI_DEST[destToken];
+                    if (!fromChain || !dest) { sweepLog(`${t.symbol}: cross-chain not supported for ${t.chain}`, 'fail'); fail++; continue; }
+                    const toAddress = dest.chain === 'SOL' ? (connectedSolAddr || userAddr) : userAddr;
+                    const params = new URLSearchParams({
+                        fromChain, toChain: dest.chain,
+                        fromToken: t.mint || t.contractAddress, toToken: dest.token,
+                        fromAmount: rawAmount, fromAddress: userAddr, toAddress, slippage: '0.03'
+                    });
+                    const quoteRes = await fetch(LIFI_API + '/quote?' + params.toString());
+                    const quote = await quoteRes.json();
+                    if (!quote.transactionRequest) { sweepLog(`${t.symbol}: ${quote.message || 'No route'}`, 'fail'); fail++; continue; }
+                    t._lifiQuote = quote; // cache for phase 2
+                    spender = quote.estimate?.approvalAddress;
+                } else {
+                    if (!ODOS_CHAIN_IDS[t.chain]) { sweepLog(`${t.symbol}: not supported on ${t.chain}`, 'fail'); fail++; continue; }
+                    // Get Odos quote + assemble to find router address
+                    const chainId = ODOS_CHAIN_IDS[t.chain];
+                    const fromToken = t.mint || t.contractAddress;
+                    const quoteRes = await fetch(ODOS_API + '/sor/quote/v2', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            chainId, inputTokens: [{ tokenAddress: fromToken, amount: rawAmount }],
+                            outputTokens: [{ tokenAddress: '0x0000000000000000000000000000000000000000', proportion: 1 }],
+                            userAddr
+                        })
+                    });
+                    const quote = await quoteRes.json();
+                    if (!quote.pathId) { sweepLog(`${t.symbol}: ${quote.detail || quote.message || 'No route'}`, 'fail'); fail++; continue; }
+                    const assembleRes = await fetch(ODOS_API + '/sor/assemble', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pathId: quote.pathId, userAddr })
+                    });
+                    const assembled = await assembleRes.json();
+                    if (!assembled.transaction?.to) { sweepLog(`${t.symbol}: failed to assemble`, 'fail'); fail++; continue; }
+                    t._odosTx = assembled.transaction; // cache for phase 2
+                    spender = assembled.transaction.to;
+                }
+
+                // Check allowance and approve if needed
+                if (spender) {
+                    const fromToken = t.mint || t.contractAddress;
+                    const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + spender.slice(2).padStart(64, '0');
+                    const allowance = await eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
+                    const allowanceBig = BigInt(allowance && allowance !== '0x' ? allowance : '0x0');
+                    if (allowanceBig < BigInt(rawAmount)) {
+                        const maxApproval = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+                        const approveData = '0x095ea7b3' + spender.slice(2).padStart(64, '0') + maxApproval;
+                        const approveTx = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: fromToken, data: approveData }] });
+                        sweepLog(`${t.symbol} approved ✓`, 'ok');
+                    } else {
+                        sweepLog(`${t.symbol} already approved ✓`, 'info');
+                    }
+                }
+                approvedTokens.push(t);
+            } catch(e) {
+                sweepLog(`${t.symbol} approve failed: ${e.message}`, 'fail');
+                fail++;
+            }
+        }
+
+        // Wait for approvals to confirm before swapping
+        if (approvedTokens.length > 0) {
+            sweepLog('\n⏳ Waiting for approvals to confirm...', 'info');
+            await new Promise(r => setTimeout(r, 6000));
+
+            // ===== PHASE 2: BATCH SWAP ALL APPROVED EVM TOKENS =====
+            sweepLog(`\n🧹 PHASE 2: Sweeping ${approvedTokens.length} tokens — confirm each in wallet`, 'info');
+            for (let i = 0; i < approvedTokens.length; i++) {
+                const t = approvedTokens[i];
+                step++;
+                fill.style.width = (step / total * 100) + '%';
+                btn.innerHTML = `🧹 Swap ${i + 1}/${approvedTokens.length}: ${t.symbol}`;
+                try {
+                    const eth = window.ethereum;
+                    const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
+                    let txHash;
+                    if (isCrossChain && t._lifiQuote) {
+                        const tx = t._lifiQuote.transactionRequest;
+                        txHash = await eth.request({ method: 'eth_sendTransaction', params: [{
+                            from: userAddr, to: tx.to, data: tx.data,
+                            value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0',
+                            gasLimit: tx.gasLimit ? ('0x' + BigInt(tx.gasLimit).toString(16)) : undefined
+                        }]});
+                    } else if (t._odosTx) {
+                        const tx = t._odosTx;
+                        txHash = await eth.request({ method: 'eth_sendTransaction', params: [{
+                            from: userAddr, to: tx.to, data: tx.data,
+                            value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0'
+                        }]});
+                    }
+                    sweepLog(`${t.symbol} on ${t.chain} swept → ${txHash.slice(0, 16)}...`, 'ok');
+                    ok++;
+                } catch(e) {
+                    sweepLog(`${t.symbol}: ${e.message}`, 'fail');
+                    fail++;
+                }
+                if (i < approvedTokens.length - 1) await new Promise(r => setTimeout(r, 500));
+            }
+        }
+    }
+
+    // ===== PHASE 3: SOLANA TOKENS (no approval needed) =====
+    if (solTokens.length > 0) {
+        sweepLog(`\n🌅 Sweeping ${solTokens.length} Solana token(s)`, 'info');
+        for (let i = 0; i < solTokens.length; i++) {
+            const t = solTokens[i];
+            step++;
+            fill.style.width = (step / total * 100) + '%';
+            btn.innerHTML = `🧹 ${step}/${total}: ${t.symbol}`;
             try {
                 const mintToSwap = t.isNative ? 'So11111111111111111111111111111111111111112' : t.mint;
-                // Reserve 0.01 SOL for gas if sweeping native SOL
                 const amtToSwap = t.isNative ? Math.max(0, t.balance - 0.01) : t.balance;
                 if (amtToSwap <= 0) { sweepLog(t.symbol + ': keeping for gas', 'info'); fail++; continue; }
                 const quote = await jupQuote(mintToSwap, amtToSwap, t.decimals);
                 const outDec = (OUTPUT_MINTS[destToken] || OUTPUT_MINTS.SOL).decimals;
                 const outAmt = parseInt(quote.outAmount) / (10 ** outDec);
                 sweepLog(`${t.symbol}: ${t.balance.toFixed(2)} → ${outAmt.toFixed(4)} ${destToken}`, 'info');
-
                 const { swapTransaction } = await jupSwapTx(quote, connectedSolAddr);
                 const sig = await signAndSendSolana(swapTransaction);
                 sweepLog(`${t.symbol} swept → <a href="https://solscan.io/tx/${sig}" target="_blank" style="color:var(--accent-light)">${sig.slice(0, 12)}...</a>`, 'ok');
@@ -1032,27 +1155,7 @@ async function doSweep() {
                 sweepLog(`${t.symbol}: ${e.message}`, 'fail');
                 fail++;
             }
-        } else {
-            // EVM: same-chain via Odos, cross-chain via LI.FI
-            const isCrossChain = destToken === 'ETH-ARB' || destToken === 'USDC-ARB' || destToken === 'USDC-SOL' || destToken === 'SOL';
-            try {
-                if (t.isNative) throw new Error('Native gas token — skip');
-                let txHash;
-                if (isCrossChain) {
-                    txHash = await lifiSwapBridge(t.mint, t.chain, t.balance, t.decimals || 18, destToken, connectedSolAddr);
-                } else {
-                    if (!ODOS_CHAIN_IDS[t.chain]) throw new Error('Swap not supported on ' + t.chain + ' yet');
-                    txHash = await odosSwap(t.mint, t.chain, t.balance, t.decimals || 18);
-                }
-                sweepLog(`${t.symbol} on ${t.chain} swept → ${txHash.slice(0, 16)}...`, 'ok');
-                ok++;
-            } catch(e) {
-                sweepLog(`${t.symbol}: ${e.message}`, 'fail');
-                fail++;
-            }
         }
-
-        if (i < viable.length - 1) await new Promise(r => setTimeout(r, 1000));
     }
 
     // Result
