@@ -775,11 +775,23 @@ function render() {
         approveBtn.style.display = 'none';
         sweepBtn.style.display = 'block';
         sweepBtn.disabled = selTokens.length === 0;
-        sweepBtn.innerHTML = '🧹 Sweep All<span class="sub">One transaction per chain</span>';
+        sweepBtn.innerHTML = '🧹 Sweep All<span class="sub">One click · one tx per chain</span>';
     } else if (hasBatchChains && sweepPhase === 'idle') {
         approveBtn.style.display = 'block';
         approveBtn.disabled = selTokens.length === 0;
-        approveBtn.innerHTML = `📝 Approve All (${evmSel.length} tokens)<span class="sub">Fire all approvals at once, then sweep</span>`;
+        approveBtn.innerHTML = `📝 Approve ${evmSel.length} Tokens<span class="sub">One-time setup · future sweeps are 1-click</span>`;
+        // Async check how many actually need approval
+        checkApprovalCount(evmSel).then(({needed, total}) => {
+            if (needed === 0) {
+                approveBtn.style.display = 'none';
+                sweepPhase = 'approved';
+                sweepBtn.style.display = 'block';
+                sweepBtn.disabled = false;
+                sweepBtn.innerHTML = '🧹 Sweep All<span class="sub">All tokens pre-approved · one click</span>';
+            } else {
+                approveBtn.innerHTML = `📝 Approve ${needed} of ${total} Tokens<span class="sub">One-time setup · future sweeps are 1-click</span>`;
+            }
+        });
         sweepBtn.style.display = 'none';
     } else {
         approveBtn.style.display = 'none';
@@ -787,6 +799,28 @@ function render() {
         sweepBtn.disabled = selTokens.length === 0;
         sweepBtn.innerHTML = '🧹 Sweep Selected<span class="sub">Sign each swap in your wallet</span>';
     }
+}
+
+async function checkApprovalCount(evmTokens) {
+    const eth = window.ethereum;
+    if (!eth) return { needed: evmTokens.length, total: evmTokens.length };
+    try {
+        const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
+        let needed = 0;
+        for (const t of evmTokens) {
+            const contractAddr = BATCH_SWEEPER[t.chain];
+            if (!contractAddr) { needed++; continue; }
+            const fromToken = t.mint || t.contractAddress;
+            const rawAmount = BigInt(Math.floor(t.balance * (10 ** (t.decimals || 18))));
+            try {
+                const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + contractAddr.slice(2).padStart(64, '0');
+                const allowance = await eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
+                const allowanceBig = BigInt(allowance && allowance !== '0x' ? allowance : '0x0');
+                if (allowanceBig < rawAmount) needed++;
+            } catch { needed++; }
+        }
+        return { needed, total: evmTokens.length };
+    } catch { return { needed: evmTokens.length, total: evmTokens.length }; }
 }
 
 function toggleSel(i) { if (selected.has(i)) selected.delete(i); else selected.add(i); render(); }
