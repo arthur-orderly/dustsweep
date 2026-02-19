@@ -202,8 +202,11 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
             <div class="summary-row total"><span class="l">You receive</span><span class="v" id="smNet">$0</span></div>
         </div>
 
+        <button class="sweep-btn" id="approveBtn" style="display:none;" onclick="doApproveAll()" disabled>
+            📝 Approve All<span class="sub">Approve tokens for BatchSweeper contract</span>
+        </button>
         <button class="sweep-btn" id="sweepBtn" style="display:none;" onclick="doSweep()" disabled>
-            🧹 Sweep Selected<span class="sub">Sign each swap in your wallet</span>
+            🧹 Sweep All<span class="sub">One transaction per chain</span>
         </button>
         <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill"></div></div>
         <div class="sweep-log" id="sweepLog"></div>
@@ -216,6 +219,19 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
 const COLORS = ['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD','#98D8C8','#F7DC6F','#BB8FCE','#85C1E9','#F0B27A','#82E0AA'];
 let tokens = [], selected = new Set(), destToken = 'ETH-ARB', chainFilter = 'all', solRpc = null;
 let connectedSolAddr = null, connectedEvmAddr = null;
+let sweepPhase = 'idle'; // idle | approving | approved | sweeping
+
+// === BATCH SWEEPER CONTRACT ===
+const BATCH_SWEEPER = {
+    'Arbitrum': '0x847E855967cC15793c8D19e5BbA964AdbD19CED1',
+    'Base': '0xBbbBcE377172Cad7009F21C80089950eA7E214Df',
+    'Ethereum': '0xa67C6e0C0Ce8215a1e01aFEB80Fed9d84a7fcA9B',
+};
+const BATCH_SWEEPER_CHAINS = {
+    'Arbitrum': 42161,
+    'Base': 8453,
+    'Ethereum': 1,
+};
 
 // === DEBUG ===
 const DEBUG = window.location.search.includes('debug');
@@ -406,6 +422,8 @@ async function scan(evmAddr, solAddr) {
     document.getElementById('configPanel').style.display = 'none';
     document.getElementById('summaryPanel').style.display = 'none';
     document.getElementById('sweepBtn').style.display = 'none';
+    document.getElementById('approveBtn').style.display = 'none';
+    sweepPhase = 'idle';
 
     // === SOLANA ===
     if (solAddr) {
@@ -643,7 +661,7 @@ async function scan(evmAddr, solAddr) {
     document.getElementById('tokenPanel').style.display = 'block';
     document.getElementById('configPanel').style.display = 'block';
     document.getElementById('summaryPanel').style.display = 'block';
-    document.getElementById('sweepBtn').style.display = 'block';
+    // sweepBtn/approveBtn visibility handled by render()
     render();
 }
 
@@ -747,7 +765,28 @@ function render() {
     document.getElementById('smFee').textContent = 'Free (beta)';
     const destLabel = { 'ETH-ARB': 'ETH on Arbitrum', 'USDC-ARB': 'USDC on Arbitrum', 'USDC-SOL': 'USDC on Solana', 'SOL': 'SOL on Solana' }[destToken] || destToken;
     document.getElementById('smNet').textContent = '~$' + (gross - fee).toFixed(2) + ' → ' + destLabel;
-    document.getElementById('sweepBtn').disabled = selTokens.length === 0;
+    // Show appropriate button based on phase
+    const evmSel = selTokens.filter(t => t.chain !== 'Solana' && !t.isNative && t.isErc20);
+    const hasBatchChains = evmSel.some(t => BATCH_SWEEPER[t.chain]);
+    const approveBtn = document.getElementById('approveBtn');
+    const sweepBtn = document.getElementById('sweepBtn');
+
+    if (sweepPhase === 'approved') {
+        approveBtn.style.display = 'none';
+        sweepBtn.style.display = 'block';
+        sweepBtn.disabled = selTokens.length === 0;
+        sweepBtn.innerHTML = '🧹 Sweep All<span class="sub">One transaction per chain</span>';
+    } else if (hasBatchChains && sweepPhase === 'idle') {
+        approveBtn.style.display = 'block';
+        approveBtn.disabled = selTokens.length === 0;
+        approveBtn.innerHTML = `📝 Approve All (${evmSel.length} tokens)<span class="sub">Fire all approvals at once, then sweep</span>`;
+        sweepBtn.style.display = 'none';
+    } else {
+        approveBtn.style.display = 'none';
+        sweepBtn.style.display = 'block';
+        sweepBtn.disabled = selTokens.length === 0;
+        sweepBtn.innerHTML = '🧹 Sweep Selected<span class="sub">Sign each swap in your wallet</span>';
+    }
 }
 
 function toggleSel(i) { if (selected.has(i)) selected.delete(i); else selected.add(i); render(); }
@@ -1058,6 +1097,168 @@ async function lifiSwapBridge(fromToken, chainName, amount, decimals, destKey, s
     });
 }
 
+// === BATCH SWEEPER: APPROVE ALL (Phase 1) ===
+async function doApproveAll() {
+    const approveBtn = document.getElementById('approveBtn');
+    const bar = document.getElementById('progressBar');
+    const fill = document.getElementById('progressFill');
+    const logEl = document.getElementById('sweepLog');
+    approveBtn.disabled = true;
+    bar.style.display = 'block';
+    logEl.innerHTML = '';
+    sweepPhase = 'approving';
+
+    const selTokens = tokens.filter((_, i) => selected.has(i));
+    const evmTokens = selTokens.filter(t => t.chain !== 'Solana' && !t.isNative && t.isErc20 && BATCH_SWEEPER[t.chain]);
+
+    if (evmTokens.length === 0) {
+        sweepLog('No BatchSweeper-compatible tokens selected', 'fail');
+        approveBtn.disabled = false; bar.style.display = 'none';
+        sweepPhase = 'idle'; render(); return;
+    }
+
+    const eth = window.ethereum;
+    const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
+
+    // Check which tokens need approval and fire ALL approvals in parallel
+    sweepLog(`📝 Checking approvals for ${evmTokens.length} tokens...`, 'info');
+    const needsApproval = [];
+
+    for (const t of evmTokens) {
+        const contractAddr = BATCH_SWEEPER[t.chain];
+        const fromToken = t.mint || t.contractAddress;
+        const rawAmount = BigInt(Math.floor(t.balance * (10 ** (t.decimals || 18)))).toString();
+
+        try {
+            const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + contractAddr.slice(2).padStart(64, '0');
+            const allowance = await eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
+            const allowanceBig = BigInt(allowance && allowance !== '0x' ? allowance : '0x0');
+            if (allowanceBig < BigInt(rawAmount)) {
+                needsApproval.push(t);
+            } else {
+                sweepLog(`${t.symbol} already approved ✓`, 'info');
+            }
+        } catch(e) {
+            needsApproval.push(t); // approve anyway if check fails
+        }
+    }
+
+    if (needsApproval.length === 0) {
+        sweepLog('All tokens already approved! ✓', 'ok');
+        sweepPhase = 'approved';
+        bar.style.display = 'none';
+        render();
+        return;
+    }
+
+    sweepLog(`🔥 Firing ${needsApproval.length} approvals in parallel — confirm each in wallet rapidly!`, 'info');
+
+    // Fire all approval txs simultaneously
+    const maxApproval = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+    const approvalPromises = needsApproval.map(t => {
+        const contractAddr = BATCH_SWEEPER[t.chain];
+        const fromToken = t.mint || t.contractAddress;
+        const approveData = '0x095ea7b3' + contractAddr.slice(2).padStart(64, '0') + maxApproval;
+        return eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: fromToken, data: approveData }] })
+            .then(txHash => { sweepLog(`${t.symbol} approval sent → ${txHash.slice(0, 16)}...`, 'ok'); return { token: t, txHash, status: 'ok' }; })
+            .catch(e => { sweepLog(`${t.symbol} approval failed: ${e.message}`, 'fail'); return { token: t, status: 'fail', error: e }; });
+    });
+
+    const results = await Promise.allSettled(approvalPromises);
+    const successful = results.filter(r => r.status === 'fulfilled' && r.value.status === 'ok');
+    const failed = results.filter(r => r.status !== 'fulfilled' || r.value.status !== 'ok');
+
+    if (successful.length === 0) {
+        sweepLog('All approvals failed!', 'fail');
+        sweepPhase = 'idle';
+        approveBtn.disabled = false;
+        bar.style.display = 'none';
+        render();
+        return;
+    }
+
+    // Wait for approval txs to confirm
+    sweepLog(`⏳ Waiting for ${successful.length} approval(s) to confirm...`, 'info');
+    await new Promise(r => setTimeout(r, 8000));
+
+    fill.style.width = '50%';
+    sweepLog(`✅ ${successful.length} approvals confirmed! Click "Sweep All" to execute.`, 'ok');
+    if (failed.length > 0) sweepLog(`⚠️ ${failed.length} approval(s) failed — those tokens will be skipped.`, 'fail');
+
+    sweepPhase = 'approved';
+    bar.style.display = 'none';
+    render();
+}
+
+// === ABI ENCODER for BatchSweeper.sweep() ===
+function encodeSweepCall(tokens, amounts, routers, swapDatas) {
+    // sweep(address[],uint256[],address[],bytes[])
+    // selector: keccak256("sweep(address[],uint256[],address[],bytes[])") = 0x257a164f
+    const selector = '0x257a164f';
+    const n = tokens.length;
+
+    // Dynamic encoding: 4 offsets, then 4 arrays
+    // Each array starts at its offset from the start of params
+    const pad = (v, len = 64) => v.padStart(len, '0');
+    const encAddr = a => pad(a.slice(2).toLowerCase());
+    const encUint = v => pad(BigInt(v).toString(16));
+
+    // Calculate offsets (in bytes, from start of params area)
+    // 4 pointers = 4 * 32 = 128 bytes
+    const tokensOffset = 4 * 32;
+    const tokensSize = 32 + n * 32; // length + n addresses
+    const amountsOffset = tokensOffset + tokensSize;
+    const amountsSize = 32 + n * 32;
+    const routersOffset = amountsOffset + amountsSize;
+    const routersSize = 32 + n * 32;
+    const swapDatasOffset = routersOffset + routersSize;
+
+    let encoded = selector;
+    // 4 offset pointers
+    encoded += encUint(tokensOffset);
+    encoded += encUint(amountsOffset);
+    encoded += encUint(routersOffset);
+    encoded += encUint(swapDatasOffset);
+
+    // tokens array
+    encoded += encUint(n);
+    for (const t of tokens) encoded += encAddr(t);
+
+    // amounts array
+    encoded += encUint(n);
+    for (const a of amounts) encoded += encUint(a);
+
+    // routers array
+    encoded += encUint(n);
+    for (const r of routers) encoded += encAddr(r);
+
+    // bytes[] array (dynamic inner elements)
+    encoded += encUint(n);
+    // Inner offsets (relative to start of bytes[] data area, which is after the n offset slots)
+    const innerOffsetsStart = n * 32; // offset from after the length
+    let innerOffsets = [];
+    let innerDatas = [];
+    let runningOffset = n * 32; // start after all offset slots
+
+    for (const sd of swapDatas) {
+        innerOffsets.push(runningOffset);
+        const hexData = sd.startsWith('0x') ? sd.slice(2) : sd;
+        const byteLen = hexData.length / 2;
+        const paddedLen = Math.ceil(byteLen / 32) * 32;
+        // length (32) + padded data
+        runningOffset += 32 + paddedLen;
+        innerDatas.push({ hexData, byteLen, paddedLen });
+    }
+
+    for (const off of innerOffsets) encoded += encUint(off);
+    for (const { hexData, byteLen, paddedLen } of innerDatas) {
+        encoded += encUint(byteLen);
+        encoded += hexData + '0'.repeat(paddedLen * 2 - hexData.length);
+    }
+
+    return encoded;
+}
+
 // === MAIN SWEEP ===
 async function doSweep() {
     const btn = document.getElementById('sweepBtn');
@@ -1093,144 +1294,216 @@ async function doSweep() {
     let ok = 0, fail = 0, step = 0;
     const isCrossChain = destToken === 'ETH-ARB' || destToken === 'USDC-ARB' || destToken === 'USDC-SOL' || destToken === 'SOL';
 
-    // ===== PHASE 1: BATCH APPROVE ALL EVM TOKENS =====
+    // ===== EVM TOKENS =====
     if (evmTokens.length > 0) {
-        sweepLog(`\n📝 PHASE 1: Approving ${evmTokens.length} tokens — confirm each in wallet`, 'info');
-        const approvedTokens = [];
-        for (let i = 0; i < evmTokens.length; i++) {
-            const t = evmTokens[i];
-            btn.innerHTML = `📝 Approve ${i + 1}/${evmTokens.length}: ${t.symbol}`;
-            try {
-                const eth = window.ethereum;
-                const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
-                const rawAmount = BigInt(Math.floor(t.balance * (10 ** (t.decimals || 18)))).toString();
+        const eth = window.ethereum;
+        const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
 
-                // Determine spender address
-                let spender;
-                if (isCrossChain) {
-                    const fromChain = LIFI_CHAIN_MAP[t.chain];
-                    const dest = LIFI_DEST[destToken];
-                    if (!fromChain || !dest) { sweepLog(`${t.symbol}: cross-chain not supported for ${t.chain}`, 'fail'); fail++; continue; }
-                    const toAddress = dest.chain === 'SOL' ? (connectedSolAddr || userAddr) : userAddr;
-                    const params = new URLSearchParams({
-                        fromChain, toChain: dest.chain,
-                        fromToken: t.mint || t.contractAddress, toToken: dest.token,
-                        fromAmount: rawAmount, fromAddress: userAddr, toAddress, slippage: '0.03'
-                    });
-                    const quoteRes = await fetch(LIFI_API + '/quote?' + params.toString());
-                    const quote = await quoteRes.json();
-                    if (!quote.transactionRequest) { sweepLog(`${t.symbol}: ${quote.message || 'No route'}`, 'fail'); fail++; continue; }
-                    t._lifiQuote = quote; // cache for phase 2
-                    spender = quote.estimate?.approvalAddress;
-                } else {
+        // Split into BatchSweeper-eligible and fallback tokens
+        const batchTokens = evmTokens.filter(t => BATCH_SWEEPER[t.chain]);
+        const fallbackTokens = evmTokens.filter(t => !BATCH_SWEEPER[t.chain]);
+
+        // === BATCH SWEEPER FLOW (1 tx per chain) ===
+        if (batchTokens.length > 0) {
+            // Group by chain
+            const byChain = {};
+            for (const t of batchTokens) {
+                if (!byChain[t.chain]) byChain[t.chain] = [];
+                byChain[t.chain].push(t);
+            }
+
+            for (const [chainName, chainTokens] of Object.entries(byChain)) {
+                const batchAddr = BATCH_SWEEPER[chainName];
+                const chainId = BATCH_SWEEPER_CHAINS[chainName];
+                sweepLog(`\n🧹 BatchSweeper on ${chainName}: ${chainTokens.length} token(s)`, 'info');
+
+                // Switch chain if needed
+                try {
+                    const currentChain = await eth.request({ method: 'eth_chainId' });
+                    if (parseInt(currentChain, 16) !== chainId) {
+                        sweepLog(`Switching to ${chainName}...`, 'info');
+                        await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x' + chainId.toString(16) }] });
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
+                } catch(e) { sweepLog(`Chain switch failed: ${e.message}`, 'fail'); }
+
+                // Build arrays for sweep() call
+                const tokensArr = [], amountsArr = [], routersArr = [], swapDatasArr = [];
+                let skipChain = false;
+
+                for (const t of chainTokens) {
                     const fromToken = t.mint || t.contractAddress;
-                    let gotOdos = false;
-                    // Try Odos first
-                    if (ODOS_CHAIN_IDS[t.chain]) {
-                        try {
-                            const chainId = ODOS_CHAIN_IDS[t.chain];
+                    const rawAmount = BigInt(Math.floor(t.balance * (10 ** (t.decimals || 18)))).toString();
+                    btn.innerHTML = `🧹 Quoting ${t.symbol}...`;
+
+                    // Get swap calldata with BatchSweeper as userAddr
+                    let router, swapData;
+                    try {
+                        // Try Odos first (use batchAddr as userAddr so router pulls from contract)
+                        if (ODOS_CHAIN_IDS[chainName]) {
                             const quoteRes = await fetch(ODOS_API + '/sor/quote/v2', {
                                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                     chainId, inputTokens: [{ tokenAddress: fromToken, amount: rawAmount }],
-                                    outputTokens: [{ tokenAddress: '0x0000000000000000000000000000000000000000', proportion: 1 }],
-                                    userAddr
+                                    outputTokens: [{ tokenAddress: WRAPPED_NATIVE[chainId], proportion: 1 }],
+                                    userAddr: batchAddr
                                 })
                             });
                             const quote = await quoteRes.json();
                             if (quote.pathId) {
                                 const assembleRes = await fetch(ODOS_API + '/sor/assemble', {
                                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ pathId: quote.pathId, userAddr })
+                                    body: JSON.stringify({ pathId: quote.pathId, userAddr: batchAddr })
                                 });
                                 const assembled = await assembleRes.json();
                                 if (assembled.transaction?.to) {
-                                    t._odosTx = assembled.transaction;
-                                    spender = assembled.transaction.to;
-                                    t._swapVia = 'odos';
-                                    gotOdos = true;
+                                    router = assembled.transaction.to;
+                                    swapData = assembled.transaction.data;
+                                    sweepLog(`${t.symbol}: Odos route found ✓`, 'info');
                                 }
                             }
-                        } catch(e) { /* fall through to Uniswap */ }
-                    }
-                    // Fallback: Uniswap V3
-                    if (!gotOdos) {
-                        try {
-                            sweepLog(`${t.symbol}: no Odos route, trying Uniswap...`, 'info');
-                            const uni = await uniswapQuote(fromToken, t.chain, t.balance, t.decimals || 18);
-                            t._uniTx = uni;
-                            spender = uni.approveTo;
-                            t._swapVia = 'uniswap';
-                        } catch(e2) {
-                            sweepLog(`${t.symbol}: no route on Odos or Uniswap`, 'fail');
-                            fail++; continue;
                         }
+
+                        // Fallback: Uniswap V3
+                        if (!router) {
+                            sweepLog(`${t.symbol}: trying Uniswap...`, 'info');
+                            const weth = WETH_ADDR[chainName];
+                            const uniRouter = UNI_ROUTER[chainName];
+                            if (!uniRouter || !weth) throw new Error('No router');
+                            const feeTiers = [10000, 3000, 500, 100];
+                            let bestFee = null;
+                            for (const fee of feeTiers) {
+                                try {
+                                    const quoterAddr = '0x61fFE014bA17989E743c5F6cB21bF9697530B21e';
+                                    const tokenInPad = fromToken.slice(2).padStart(64, '0');
+                                    const tokenOutPad = weth.slice(2).padStart(64, '0');
+                                    const amountPad = BigInt(rawAmount).toString(16).padStart(64, '0');
+                                    const feePad = fee.toString(16).padStart(64, '0');
+                                    const zeropad = ''.padStart(64, '0');
+                                    const calldata = '0xc6a5026a' + '0000000000000000000000000000000000000000000000000000000000000020' + tokenInPad + tokenOutPad + amountPad + feePad + zeropad;
+                                    const result = await eth.request({ method: 'eth_call', params: [{ to: quoterAddr, data: calldata }, 'latest'] });
+                                    if (BigInt(result.slice(0, 66)) > 0n) { bestFee = fee; break; }
+                                } catch(e) {}
+                            }
+                            if (!bestFee) throw new Error('No Uniswap pool');
+                            // Build exactInputSingle with recipient = batchAddr (contract unwraps WETH)
+                            const tokenInPad = fromToken.slice(2).padStart(64, '0');
+                            const tokenOutPad = weth.slice(2).padStart(64, '0');
+                            const feePad = bestFee.toString(16).padStart(64, '0');
+                            const recipientPad = batchAddr.slice(2).padStart(64, '0');
+                            const amountPad = BigInt(rawAmount).toString(16).padStart(64, '0');
+                            const zeropad = ''.padStart(64, '0');
+                            swapData = '0x04e45aaf' + tokenInPad + tokenOutPad + feePad + recipientPad + amountPad + zeropad + zeropad;
+                            router = uniRouter;
+                            sweepLog(`${t.symbol}: Uniswap route (fee=${bestFee}) ✓`, 'info');
+                        }
+
+                        tokensArr.push(fromToken);
+                        amountsArr.push(rawAmount);
+                        routersArr.push(router);
+                        swapDatasArr.push(swapData);
+                    } catch(e) {
+                        sweepLog(`${t.symbol}: no route — ${e.message}`, 'fail');
+                        fail++;
                     }
                 }
 
-                // Check allowance and approve if needed
-                if (spender) {
-                    const fromToken = t.mint || t.contractAddress;
-                    const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + spender.slice(2).padStart(64, '0');
-                    const allowance = await eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
-                    const allowanceBig = BigInt(allowance && allowance !== '0x' ? allowance : '0x0');
-                    if (allowanceBig < BigInt(rawAmount)) {
-                        const maxApproval = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
-                        const approveData = '0x095ea7b3' + spender.slice(2).padStart(64, '0') + maxApproval;
-                        const approveTx = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: fromToken, data: approveData }] });
-                        sweepLog(`${t.symbol} approved ✓`, 'ok');
-                    } else {
-                        sweepLog(`${t.symbol} already approved ✓`, 'info');
-                    }
+                if (tokensArr.length === 0) { sweepLog(`${chainName}: no viable swaps`, 'fail'); continue; }
+
+                // Encode sweep() call
+                try {
+                    btn.innerHTML = `🧹 Sweep ${tokensArr.length} tokens on ${chainName}`;
+                    const sweepCalldata = encodeSweepCall(tokensArr, amountsArr, routersArr, swapDatasArr);
+                    const txHash = await eth.request({ method: 'eth_sendTransaction', params: [{
+                        from: userAddr, to: batchAddr, data: sweepCalldata, value: '0x0'
+                    }]});
+                    sweepLog(`${chainName}: ${tokensArr.length} tokens swept in 1 tx → ${txHash.slice(0, 16)}...`, 'ok');
+                    ok += tokensArr.length;
+                    step += tokensArr.length;
+                    fill.style.width = (step / total * 100) + '%';
+                } catch(e) {
+                    sweepLog(`${chainName} batch sweep failed: ${e.message}`, 'fail');
+                    fail += tokensArr.length;
                 }
-                approvedTokens.push(t);
-            } catch(e) {
-                sweepLog(`${t.symbol} approve failed: ${e.message}`, 'fail');
-                fail++;
             }
         }
 
-        // Wait for approvals to confirm before swapping
-        if (approvedTokens.length > 0) {
-            sweepLog('\n⏳ Waiting for approvals to confirm...', 'info');
-            await new Promise(r => setTimeout(r, 6000));
+        // === FALLBACK FLOW for non-BatchSweeper chains ===
+        if (fallbackTokens.length > 0) {
+            sweepLog(`\n📝 Legacy sweep: ${fallbackTokens.length} tokens (no BatchSweeper)`, 'info');
 
-            // ===== PHASE 2: BATCH SWAP ALL APPROVED EVM TOKENS =====
-            sweepLog(`\n🧹 PHASE 2: Sweeping ${approvedTokens.length} tokens — confirm each in wallet`, 'info');
-            for (let i = 0; i < approvedTokens.length; i++) {
-                const t = approvedTokens[i];
+            // Fire all approvals in parallel
+            const approvalPromises = fallbackTokens.map(async t => {
+                const fromToken = t.mint || t.contractAddress;
+                const rawAmount = BigInt(Math.floor(t.balance * (10 ** (t.decimals || 18)))).toString();
+                let spender, swapInfo;
+
+                // Get quote and determine spender
+                if (isCrossChain) {
+                    const fromChain = LIFI_CHAIN_MAP[t.chain];
+                    const dest = LIFI_DEST[destToken];
+                    if (!fromChain || !dest) throw new Error('cross-chain not supported');
+                    const toAddress = dest.chain === 'SOL' ? (connectedSolAddr || userAddr) : userAddr;
+                    const params = new URLSearchParams({ fromChain, toChain: dest.chain, fromToken, toToken: dest.token, fromAmount: rawAmount, fromAddress: userAddr, toAddress, slippage: '0.03' });
+                    const quoteRes = await fetch(LIFI_API + '/quote?' + params.toString());
+                    const quote = await quoteRes.json();
+                    if (!quote.transactionRequest) throw new Error(quote.message || 'No route');
+                    spender = quote.estimate?.approvalAddress;
+                    swapInfo = { type: 'lifi', tx: quote.transactionRequest };
+                } else if (ODOS_CHAIN_IDS[t.chain]) {
+                    const chainId = ODOS_CHAIN_IDS[t.chain];
+                    const quoteRes = await fetch(ODOS_API + '/sor/quote/v2', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ chainId, inputTokens: [{ tokenAddress: fromToken, amount: rawAmount }], outputTokens: [{ tokenAddress: '0x0000000000000000000000000000000000000000', proportion: 1 }], userAddr }) });
+                    const quote = await quoteRes.json();
+                    if (quote.pathId) {
+                        const assembleRes = await fetch(ODOS_API + '/sor/assemble', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pathId: quote.pathId, userAddr }) });
+                        const assembled = await assembleRes.json();
+                        if (assembled.transaction?.to) { spender = assembled.transaction.to; swapInfo = { type: 'odos', tx: assembled.transaction }; }
+                    }
+                }
+                if (!swapInfo) {
+                    const uni = await uniswapQuote(fromToken, t.chain, t.balance, t.decimals || 18);
+                    spender = uni.approveTo;
+                    swapInfo = { type: 'uniswap', tx: uni };
+                }
+
+                // Approve if needed
+                if (spender) {
+                    const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + spender.slice(2).padStart(64, '0');
+                    const allowance = await eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
+                    if (BigInt(allowance && allowance !== '0x' ? allowance : '0x0') < BigInt(rawAmount)) {
+                        const maxApproval = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+                        const approveData = '0x095ea7b3' + spender.slice(2).padStart(64, '0') + maxApproval;
+                        await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: fromToken, data: approveData }] });
+                        sweepLog(`${t.symbol} approved ✓`, 'ok');
+                    }
+                }
+                return { token: t, swapInfo };
+            });
+
+            const results = await Promise.allSettled(approvalPromises);
+            await new Promise(r => setTimeout(r, 6000)); // wait for approvals
+
+            // Fire all swaps
+            for (const r of results) {
+                if (r.status !== 'fulfilled') { fail++; continue; }
+                const { token: t, swapInfo } = r.value;
                 step++;
                 fill.style.width = (step / total * 100) + '%';
-                btn.innerHTML = `🧹 Swap ${i + 1}/${approvedTokens.length}: ${t.symbol}`;
                 try {
-                    const eth = window.ethereum;
-                    const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
                     let txHash;
-                    if (isCrossChain && t._lifiQuote) {
-                        const tx = t._lifiQuote.transactionRequest;
-                        txHash = await eth.request({ method: 'eth_sendTransaction', params: [{
-                            from: userAddr, to: tx.to, data: tx.data,
-                            value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0',
-                            gasLimit: tx.gasLimit ? ('0x' + BigInt(tx.gasLimit).toString(16)) : undefined
-                        }]});
-                    } else if (t._swapVia === 'uniswap' && t._uniTx) {
-                        txHash = await eth.request({ method: 'eth_sendTransaction', params: [{
-                            from: userAddr, to: t._uniTx.router, data: t._uniTx.txData, value: '0x0'
-                        }]});
-                    } else if (t._odosTx) {
-                        const tx = t._odosTx;
-                        txHash = await eth.request({ method: 'eth_sendTransaction', params: [{
-                            from: userAddr, to: tx.to, data: tx.data,
-                            value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0'
-                        }]});
+                    if (swapInfo.type === 'lifi') {
+                        const tx = swapInfo.tx;
+                        txHash = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: tx.to, data: tx.data, value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0' }]});
+                    } else if (swapInfo.type === 'uniswap') {
+                        txHash = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: swapInfo.tx.router, data: swapInfo.tx.txData, value: '0x0' }]});
+                    } else {
+                        const tx = swapInfo.tx;
+                        txHash = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: tx.to, data: tx.data, value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0' }]});
                     }
-                    sweepLog(`${t.symbol} on ${t.chain} swept → ${txHash.slice(0, 16)}...`, 'ok');
+                    sweepLog(`${t.symbol} swept → ${txHash.slice(0, 16)}...`, 'ok');
                     ok++;
-                } catch(e) {
-                    sweepLog(`${t.symbol}: ${e.message}`, 'fail');
-                    fail++;
-                }
-                if (i < approvedTokens.length - 1) await new Promise(r => setTimeout(r, 500));
+                } catch(e) { sweepLog(`${t.symbol}: ${e.message}`, 'fail'); fail++; }
             }
         }
     }
@@ -1276,8 +1549,10 @@ async function doSweep() {
         btn.style.background = 'linear-gradient(135deg,#ef4444,#dc2626)';
     }
     setTimeout(() => {
-        btn.innerHTML = '🧹 Sweep Selected<span class="sub">Sign each swap in your wallet</span>';
+        btn.innerHTML = '🧹 Sweep All<span class="sub">One transaction per chain</span>';
         btn.style.background = ''; btn.disabled = false; bar.style.display = 'none';
+        sweepPhase = 'idle';
+        render();
     }, 8000);
 }
 </script>

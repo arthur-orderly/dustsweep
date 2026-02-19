@@ -1,0 +1,24 @@
+{
+  "BatchSweeper": {
+    "Arbitrum": {
+      "address": "0x847E855967cC15793c8D19e5BbA964AdbD19CED1",
+      "chainId": 42161,
+      "tx": "0x676aab69e380752c394d08f328bf420f98cdaca93e2629ee74aeaa7dbfe5ece4"
+    },
+    "Base": {
+      "address": "0xBbbBcE377172Cad7009F21C80089950eA7E214Df",
+      "chainId": 8453,
+      "tx": "0x532a5dc640192a5800e19a35fe85786e1eef1f31768e9205202b4d55a4cf5740"
+    },
+    "Ethereum": {
+      "address": "0xa67C6e0C0Ce8215a1e01aFEB80Fed9d84a7fcA9B",
+      "chainId": 1,
+      "tx": "0xcee9c14669cd37012479bca14f1cb2e9d3cf91490abdf5438a06d9fde80c4e76"
+    }
+  },
+  "skipped": {
+    "Optimism": "no gas",
+    "Polygon": "RPC auth error",
+    "BSC": "no gas"
+  }
+}
