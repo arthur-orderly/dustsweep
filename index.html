@@ -1143,7 +1143,14 @@ async function doApproveAll() {
     sweepPhase = 'approving';
 
     const selTokens = tokens.filter((_, i) => selected.has(i));
-    const evmTokens = selTokens.filter(t => t.chain !== 'Solana' && !t.isNative && BATCH_SWEEPER[t.chain]);
+    const isCross = destToken === 'ETH-ARB' || destToken === 'USDC-ARB' || destToken === 'USDC-SOL' || destToken === 'SOL';
+    const destChain = { 'ETH-ARB': 'Arbitrum', 'USDC-ARB': 'Arbitrum' }[destToken];
+    const evmTokens = selTokens.filter(t => {
+        if (t.chain === 'Solana' || t.isNative) return false;
+        if (!BATCH_SWEEPER[t.chain]) return false;
+        if (isCross && t.chain !== destChain) return false; // cross-chain tokens go through LI.FI, not BatchSweeper
+        return true;
+    });
 
     if (evmTokens.length === 0) {
         sweepLog('No BatchSweeper-compatible tokens selected', 'fail');
@@ -1334,8 +1341,14 @@ async function doSweep() {
         const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
 
         // Split into BatchSweeper-eligible and fallback tokens
-        const batchTokens = evmTokens.filter(t => BATCH_SWEEPER[t.chain]);
-        const fallbackTokens = evmTokens.filter(t => !BATCH_SWEEPER[t.chain]);
+        // BatchSweeper only works for same-chain swaps (token chain matches destination)
+        const destChainName = { 'ETH-ARB': 'Arbitrum', 'USDC-ARB': 'Arbitrum', 'USDC-SOL': null, 'SOL': null }[destToken];
+        const batchTokens = isCrossChain
+            ? evmTokens.filter(t => BATCH_SWEEPER[t.chain] && t.chain === destChainName)
+            : evmTokens.filter(t => BATCH_SWEEPER[t.chain]);
+        const fallbackTokens = isCrossChain
+            ? evmTokens.filter(t => !BATCH_SWEEPER[t.chain] || t.chain !== destChainName)
+            : evmTokens.filter(t => !BATCH_SWEEPER[t.chain]);
 
         // === BATCH SWEEPER FLOW (1 tx per chain) ===
         if (batchTokens.length > 0) {
