@@ -259,6 +259,11 @@ function toRawAmount(balance, decimals) {
     const raw = whole + padded;
     return BigInt(raw).toString();
 }
+// Get raw balance: prefer API's full-precision rawBalance, fall back to float conversion
+function getRawBalance(t) {
+    if (t.rawBalance) return t.rawBalance;
+    return getRawBalance(t);
+}
 
 const BATCH_SWEEPER = {
     'Arbitrum': '0xCcab3444D4FDfbf37b63BfE1beDbC44701Ef35De',
@@ -715,7 +720,7 @@ async function backgroundPrice() {
 
     const priceOne = async ({t, i}) => {
         try {
-            const rawAmt = Number(toRawAmount(t.balance, t.decimals));
+            const rawAmt = Number(getRawBalance(t));
             if (rawAmt <= 0) return;
             const qr = await fetchT(`${JUP_API}/quote?inputMint=${t.mint}&outputMint=So11111111111111111111111111111111111111112&amount=${rawAmt}&slippageBps=500`, {}, 4000);
             if (qr.ok) {
@@ -854,7 +859,7 @@ async function checkApprovalCount(evmTokens) {
             const contractAddr = BATCH_SWEEPER[t.chain];
             if (!contractAddr) { needed++; continue; }
             const fromToken = t.mint || t.contractAddress;
-            const rawAmount = BigInt(toRawAmount(t.balance, t.decimals || 18));
+            const rawAmount = BigInt(getRawBalance(t));
             try {
                 const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + contractAddr.slice(2).padStart(64, '0');
                 const allowance = await eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
@@ -1231,7 +1236,7 @@ async function doApproveAll() {
     for (const t of evmTokens) {
         const contractAddr = BATCH_SWEEPER[t.chain];
         const fromToken = t.mint || t.contractAddress;
-        const rawAmount = toRawAmount(t.balance, t.decimals || 18);
+        const rawAmount = getRawBalance(t);
 
         try {
             const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + contractAddr.slice(2).padStart(64, '0');
@@ -1476,7 +1481,7 @@ async function doSweep() {
 
                 for (const t of chainTokens) {
                     const fromToken = t.mint || t.contractAddress;
-                    const rawAmount = toRawAmount(t.balance, t.decimals || 18);
+                    const rawAmount = getRawBalance(t);
                     btn.innerHTML = `🧹 Quoting ${t.symbol}...`;
 
                     // Get swap calldata with BatchSweeper as userAddr
@@ -1578,7 +1583,7 @@ async function doSweep() {
             // Fire all approvals in parallel
             const approvalPromises = fallbackTokens.map(async t => {
                 const fromToken = t.mint || t.contractAddress;
-                const rawAmount = toRawAmount(t.balance, t.decimals || 18);
+                const rawAmount = getRawBalance(t);
                 let spender, swapInfo;
 
                 // Get quote and determine spender
@@ -1666,7 +1671,7 @@ async function doSweep() {
                         if (swapInfo.type === 'lifi' && isCrossChain) {
                             sweepLog(`${t.symbol}: refreshing cross-chain quote...`, 'info');
                             const fromToken = t.mint || t.contractAddress;
-                            const rawAmount = toRawAmount(t.balance, t.decimals || 18);
+                            const rawAmount = getRawBalance(t);
                             const fromChain = LIFI_CHAIN_MAP[t.chain];
                             const dest = LIFI_DEST[destToken];
                             const toAddress = dest.chain === 'SOL' ? (connectedSolAddr || userAddr) : userAddr;

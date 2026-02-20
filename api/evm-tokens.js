@@ -118,6 +118,7 @@ export default async function handler(req, res) {
         chain: chain.name,
         chainSlug: chain.slug,
         balance: bal,
+        rawBalance: value, // full precision integer string
         contractAddress: (tok.address_hash || tok.address || '').toLowerCase(),
         decimals,
         logoUrl: tok.icon_url || null
@@ -151,6 +152,7 @@ export default async function handler(req, res) {
             chain: chain.name,
             chainSlug: chain.slug,
             balance: bal,
+            rawBalance: BigInt(d.result).toString(),
             contractAddress: t.addr,
             decimals: t.dec,
             logoUrl: null
