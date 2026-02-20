@@ -262,7 +262,7 @@ function toRawAmount(balance, decimals) {
 // Get raw balance: prefer API's full-precision rawBalance, fall back to float conversion
 function getRawBalance(t) {
     if (t.rawBalance) return t.rawBalance;
-    return getRawBalance(t);
+    return toRawAmount(t.balance, t.decimals || 18);
 }
 
 const BATCH_SWEEPER = {
