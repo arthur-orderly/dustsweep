@@ -76,6 +76,10 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
 .config-option.active { border-color:var(--accent); background:var(--accent-glow); }
 .config-option .tn { font-size:0.85rem; font-weight:700; }
 .config-option .td { font-size:0.65rem; color:var(--text-dim); }
+.config-option select { background:var(--card); border:1px solid var(--border); color:var(--text); font-size:0.65rem;
+    padding:2px 4px; border-radius:6px; margin-top:2px; cursor:pointer; width:100%; }
+.config-option select:focus { outline:none; border-color:var(--accent); }
+.config-option.active select { border-color:var(--accent); }
 .summary-row { display:flex; justify-content:space-between; padding:6px 0; font-size:0.85rem; }
 .summary-row .l { color:var(--text-dim); } .summary-row .v { font-weight:600; }
 .summary-row.total { border-top:1px solid var(--border); margin-top:8px; padding-top:12px; font-size:1rem; }
@@ -187,11 +191,35 @@ body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; heig
         <div class="card" id="configPanel" style="display:none;">
             <div style="font-size:0.8rem;font-weight:600;color:var(--text-dim);margin-bottom:14px;text-transform:uppercase;">Sweep into</div>
             <div class="config-row">
-                <div class="config-option active" data-dest="ETH-ARB" onclick="pickToken(this,'ETH-ARB')"><div class="tn">ETH</div><div class="td">→ Arbitrum</div></div>
-                <div class="config-option" data-dest="USDC-ARB" onclick="pickToken(this,'USDC-ARB')"><div class="tn">USDC</div><div class="td">→ Arbitrum</div></div>
-                <div class="config-option" data-dest="USDC-SOL" onclick="pickToken(this,'USDC-SOL')"><div class="tn">USDC</div><div class="td">→ Solana</div></div>
-                <div class="config-option" data-dest="SOL" onclick="pickToken(this,'SOL')"><div class="tn">SOL</div><div class="td">→ Solana</div></div>
-
+                <div class="config-option active" onclick="pickAsset(this,'ETH')">
+                    <div class="tn">ETH</div>
+                    <select id="ethChain" onclick="event.stopPropagation()" onchange="pickAsset(this.parentElement,'ETH')">
+                        <option value="ARB">→ Arbitrum</option>
+                        <option value="ETH">→ Ethereum</option>
+                        <option value="BAS">→ Base</option>
+                    </select>
+                </div>
+                <div class="config-option" onclick="pickAsset(this,'USDC')">
+                    <div class="tn">USDC</div>
+                    <select id="usdcChain" onclick="event.stopPropagation()" onchange="pickAsset(this.parentElement,'USDC')">
+                        <option value="ARB">→ Arbitrum</option>
+                        <option value="ETH">→ Ethereum</option>
+                        <option value="BAS">→ Base</option>
+                        <option value="SOL">→ Solana</option>
+                    </select>
+                </div>
+                <div class="config-option" onclick="pickAsset(this,'USDT')">
+                    <div class="tn">USDT</div>
+                    <select id="usdtChain" onclick="event.stopPropagation()" onchange="pickAsset(this.parentElement,'USDT')">
+                        <option value="ARB">→ Arbitrum</option>
+                        <option value="ETH">→ Ethereum</option>
+                        <option value="BAS">→ Base</option>
+                    </select>
+                </div>
+                <div class="config-option" onclick="pickAsset(this,'SOL')">
+                    <div class="tn">SOL</div>
+                    <div class="td">→ Solana</div>
+                </div>
             </div>
         </div>
 
@@ -307,11 +335,11 @@ function updateWalletDisplay() {
 function updateDestOptions() {
     const hasEvm = !!connectedEvmAddr;
     const hasSol = !!connectedSolAddr;
-    // Show/hide cross-chain-to-Solana options based on Solana wallet
+    // Dim SOL option if no Solana wallet connected
     document.querySelectorAll('.config-option').forEach(el => {
-        const token = el.getAttribute('data-dest');
-        if (!token) return;
-        if ((token === 'USDC-SOL' || token === 'SOL') && !hasSol && hasEvm) {
+        const tn = el.querySelector('.tn');
+        if (!tn) return;
+        if (tn.textContent === 'SOL' && !hasSol && hasEvm) {
             el.style.opacity = '0.3';
             el.title = 'Connect a Solana wallet first';
         } else {
@@ -774,11 +802,15 @@ function render() {
     document.getElementById('smTok').textContent = selTokens.length;
     document.getElementById('smGross').textContent = '$' + gross.toFixed(2);
     document.getElementById('smFee').textContent = 'Free (beta)';
-    const destLabel = { 'ETH-ARB': 'ETH on Arbitrum', 'USDC-ARB': 'USDC on Arbitrum', 'USDC-SOL': 'USDC on Solana', 'SOL': 'SOL on Solana' }[destToken] || destToken;
+    const CHAIN_LABELS = { 'ARB': 'Arbitrum', 'ETH': 'Ethereum', 'BAS': 'Base', 'SOL': 'Solana' };
+    const [destAsset, destChainCode] = destToken === 'SOL' ? ['SOL','SOL'] : destToken.split('-');
+    const destLabel = destToken === 'SOL' ? 'SOL on Solana' : `${destAsset} on ${CHAIN_LABELS[destChainCode] || destChainCode}`;
     document.getElementById('smNet').textContent = '~$' + (gross - fee).toFixed(2) + ' → ' + destLabel;
     // Show appropriate button based on phase
     const evmSel = selTokens.filter(t => t.chain !== 'Solana' && !t.isNative);
-    const hasBatchChains = evmSel.some(t => BATCH_SWEEPER[t.chain]);
+    const destAssetBtn = destToken === 'SOL' ? 'SOL' : destToken.split('-')[0];
+    const destChainBtn = destToken === 'SOL' ? 'Solana' : (CHAIN_LABELS[destToken.split('-')[1]] || '');
+    const hasBatchChains = destAssetBtn === 'ETH' && evmSel.some(t => BATCH_SWEEPER[t.chain] && t.chain === destChainBtn);
     const approveBtn = document.getElementById('approveBtn');
     const sweepBtn = document.getElementById('sweepBtn');
 
@@ -837,6 +869,15 @@ async function checkApprovalCount(evmTokens) {
 function toggleSel(i) { if (selected.has(i)) selected.delete(i); else selected.add(i); render(); }
 function toggleAll() { const c = document.getElementById('selAll').checked; if (c) tokens.forEach((t, i) => { if (!t.unpriced && t.usd > 0) selected.add(i); }); else selected.clear(); render(); }
 function pickToken(el, t) { document.querySelectorAll('.config-option').forEach(o => o.classList.remove('active')); el.classList.add('active'); destToken = t; render(); }
+function pickAsset(el, asset) {
+    document.querySelectorAll('.config-option').forEach(o => o.classList.remove('active'));
+    el.classList.add('active');
+    if (asset === 'SOL') { destToken = 'SOL'; }
+    else if (asset === 'ETH') { destToken = 'ETH-' + document.getElementById('ethChain').value; }
+    else if (asset === 'USDC') { destToken = 'USDC-' + document.getElementById('usdcChain').value; }
+    else if (asset === 'USDT') { destToken = 'USDT-' + document.getElementById('usdtChain').value; }
+    render();
+}
 
 // === JUPITER SWAP (Solana) ===
 const JUP_API = 'https://lite-api.jup.ag/swap/v1';
@@ -1081,8 +1122,15 @@ const LIFI_CHAIN_MAP = {
 };
 const LIFI_DEST = {
     'ETH-ARB':  { chain: 'ARB', token: '0x0000000000000000000000000000000000000000' },
+    'ETH-ETH':  { chain: 'ETH', token: '0x0000000000000000000000000000000000000000' },
+    'ETH-BAS':  { chain: 'BAS', token: '0x0000000000000000000000000000000000000000' },
     'USDC-ARB': { chain: 'ARB', token: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' },
+    'USDC-ETH': { chain: 'ETH', token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' },
+    'USDC-BAS': { chain: 'BAS', token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
     'USDC-SOL': { chain: 'SOL', token: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
+    'USDT-ARB': { chain: 'ARB', token: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9' },
+    'USDT-ETH': { chain: 'ETH', token: '0xdAC17F958D2ee523a2206206994597C13D831ec7' },
+    'USDT-BAS': { chain: 'BAS', token: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2' },
     'SOL':      { chain: 'SOL', token: '11111111111111111111111111111111' },
 };
 
@@ -1154,12 +1202,16 @@ async function doApproveAll() {
     sweepPhase = 'approving';
 
     const selTokens = tokens.filter((_, i) => selected.has(i));
-    const isCross = destToken === 'ETH-ARB' || destToken === 'USDC-ARB' || destToken === 'USDC-SOL' || destToken === 'SOL';
-    const destChain = { 'ETH-ARB': 'Arbitrum', 'USDC-ARB': 'Arbitrum' }[destToken];
+    const LIFI_TO_CHAIN = { 'ARB': 'Arbitrum', 'ETH': 'Ethereum', 'BAS': 'Base', 'SOL': 'Solana' };
+    const destChainCode2 = destToken === 'SOL' ? 'SOL' : destToken.split('-')[1];
+    const destChain = LIFI_TO_CHAIN[destChainCode2];
+    const destAsset2 = destToken === 'SOL' ? 'SOL' : destToken.split('-')[0];
+    const canBatchApprove = destAsset2 === 'ETH'; // BatchSweeper only for ETH dest
     const evmTokens = selTokens.filter(t => {
         if (t.chain === 'Solana' || t.isNative) return false;
+        if (!canBatchApprove) return false; // USDC/USDT dest → all go through fallback, no batch approve needed
         if (!BATCH_SWEEPER[t.chain]) return false;
-        if (isCross && t.chain !== destChain) return false; // cross-chain tokens go through LI.FI, not BatchSweeper
+        if (t.chain !== destChain) return false;
         return true;
     });
 
@@ -1375,22 +1427,21 @@ async function doSweep() {
 
     const total = solTokens.length + evmTokens.length;
     let ok = 0, fail = 0, step = 0;
-    const isCrossChain = destToken === 'ETH-ARB' || destToken === 'USDC-ARB' || destToken === 'USDC-SOL' || destToken === 'SOL';
+    const LIFI_TO_CHAIN2 = { 'ARB': 'Arbitrum', 'ETH': 'Ethereum', 'BAS': 'Base', 'SOL': 'Solana' };
+    const destChainCode3 = destToken === 'SOL' ? 'SOL' : destToken.split('-')[1];
+    const destChainName = LIFI_TO_CHAIN2[destChainCode3];
+    const isCrossChain = true;
 
     // ===== EVM TOKENS =====
     if (evmTokens.length > 0) {
         const eth = evmProvider || window.ethereum;
         const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
 
-        // Split into BatchSweeper-eligible and fallback tokens
-        // BatchSweeper only works for same-chain swaps (token chain matches destination)
-        const destChainName = { 'ETH-ARB': 'Arbitrum', 'USDC-ARB': 'Arbitrum', 'USDC-SOL': null, 'SOL': null }[destToken];
-        const batchTokens = isCrossChain
-            ? evmTokens.filter(t => BATCH_SWEEPER[t.chain] && t.chain === destChainName)
-            : evmTokens.filter(t => BATCH_SWEEPER[t.chain]);
-        const fallbackTokens = isCrossChain
-            ? evmTokens.filter(t => !BATCH_SWEEPER[t.chain] || t.chain !== destChainName)
-            : evmTokens.filter(t => !BATCH_SWEEPER[t.chain]);
+        // BatchSweeper only handles → ETH output (unwraps WETH). For USDC/USDT, use fallback flow.
+        const destAsset3 = destToken === 'SOL' ? 'SOL' : destToken.split('-')[0];
+        const canBatch = destAsset3 === 'ETH'; // BatchSweeper only works for ETH destination
+        const batchTokens = canBatch ? evmTokens.filter(t => BATCH_SWEEPER[t.chain] && t.chain === destChainName) : [];
+        const fallbackTokens = evmTokens.filter(t => !batchTokens.includes(t));
         sweepLog(`\n🔀 Routing: ${batchTokens.length} via BatchSweeper, ${fallbackTokens.length} via fallback (LI.FI/Odos)`, 'info');
         batchTokens.forEach(t => sweepLog(`  Batch: ${t.symbol} on ${t.chain}`, 'info'));
         fallbackTokens.forEach(t => sweepLog(`  Fallback: ${t.symbol} on ${t.chain}`, 'info'));
@@ -1531,12 +1582,14 @@ async function doSweep() {
                 let spender, swapInfo;
 
                 // Get quote and determine spender
-                if (isCrossChain) {
+                const tokenOnDestChain = (t.chain === destChainName);
+                if (!tokenOnDestChain) {
+                    // Cross-chain: use LI.FI
                     const fromChain = LIFI_CHAIN_MAP[t.chain];
                     const dest = LIFI_DEST[destToken];
-                    if (!fromChain || !dest) throw new Error('cross-chain not supported');
+                    if (!fromChain || !dest) throw new Error('cross-chain not supported for ' + t.chain);
                     const toAddress = dest.chain === 'SOL' ? (connectedSolAddr || userAddr) : userAddr;
-                    const params = new URLSearchParams({ fromChain, toChain: dest.chain, fromToken, toToken: dest.token, fromAmount: rawAmount, fromAddress: userAddr, toAddress, slippage: '0.03' });
+                    const params = new URLSearchParams({ fromChain, toChain: dest.chain, fromToken, toToken: dest.token, fromAmount: rawAmount, fromAddress: userAddr, toAddress, slippage: '0.05' });
                     const quoteRes = await fetch(LIFI_API + '/quote?' + params.toString());
                     const quote = await quoteRes.json();
                     if (!quote.transactionRequest) throw new Error(quote.message || 'No route');
@@ -1544,8 +1597,13 @@ async function doSweep() {
                     swapInfo = { type: 'lifi', tx: quote.transactionRequest };
                 } else if (ODOS_CHAIN_IDS[t.chain]) {
                     const chainId = ODOS_CHAIN_IDS[t.chain];
+                    // Pick output token based on destination asset
+                    const USDT_BY_CHAIN = { 1: '0xdAC17F958D2ee523a2206206994597C13D831ec7', 42161: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', 8453: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2' };
+                    let odosOutToken = '0x0000000000000000000000000000000000000000'; // ETH
+                    if (destAsset3 === 'USDC') odosOutToken = USDC_BY_CHAIN[chainId] || odosOutToken;
+                    else if (destAsset3 === 'USDT') odosOutToken = USDT_BY_CHAIN[chainId] || odosOutToken;
                     const quoteRes = await fetch(ODOS_API + '/sor/quote/v2', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ chainId, inputTokens: [{ tokenAddress: fromToken, amount: rawAmount }], outputTokens: [{ tokenAddress: '0x0000000000000000000000000000000000000000', proportion: 1 }], userAddr }) });
+                        body: JSON.stringify({ chainId, inputTokens: [{ tokenAddress: fromToken, amount: rawAmount }], outputTokens: [{ tokenAddress: odosOutToken, proportion: 1 }], userAddr }) });
                     const quote = await quoteRes.json();
                     if (quote.pathId) {
                         const assembleRes = await fetch(ODOS_API + '/sor/assemble', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pathId: quote.pathId, userAddr }) });
