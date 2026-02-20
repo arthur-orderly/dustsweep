@@ -850,7 +850,7 @@ const OUTPUT_MINTS = {
 };
 
 async function jupQuote(inputMint, amount, decimals) {
-    const rawAmount = Math.floor(amount * (10 ** decimals));
+    const rawAmount = Number(toRawAmount(amount, decimals));
     if (rawAmount <= 0) throw new Error('Amount too small');
     const output = OUTPUT_MINTS[destToken] || OUTPUT_MINTS.SOL;
     const url = `${JUP_API}/quote?inputMint=${inputMint}&outputMint=${output.mint}&amount=${rawAmount}&slippageBps=300&restrictIntermediateTokens=true`;
@@ -934,7 +934,7 @@ async function odosSwap(fromToken, chainName, amount, decimals) {
     if (!chainId) throw new Error('Odos not supported on ' + chainName);
 
     const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
-    const rawAmount = BigInt(Math.floor(amount * (10 ** decimals))).toString();
+    const rawAmount = toRawAmount(amount, decimals);
     const outToken = USDC_BY_CHAIN[chainId] || WRAPPED_NATIVE[chainId];
     if (!outToken) throw new Error('No output token for ' + chainName);
 
@@ -1019,7 +1019,7 @@ async function uniswapQuote(fromToken, chainName, amount, decimals) {
 
     const eth = evmProvider || window.ethereum;
     const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
-    const rawAmount = BigInt(Math.floor(amount * (10 ** decimals)));
+    const rawAmount = BigInt(Number(toRawAmount(amount, decimals)));
 
     // Try fee tiers: 10000 (1%), 3000 (0.3%), 500 (0.05%)
     // exactInputSingle selector: 0x04e45aaf
@@ -1089,7 +1089,7 @@ const LIFI_DEST = {
 async function lifiSwapBridge(fromToken, chainName, amount, decimals, destKey, solAddr) {
     const eth = evmProvider || window.ethereum;
     const userAddr = (await eth.request({ method: 'eth_accounts' }))[0];
-    const rawAmount = BigInt(Math.floor(amount * (10 ** decimals))).toString();
+    const rawAmount = toRawAmount(amount, decimals);
     const fromChain = LIFI_CHAIN_MAP[chainName];
     const dest = LIFI_DEST[destKey];
     if (!fromChain || !dest) throw new Error('Cross-chain not supported for ' + chainName);
@@ -1604,7 +1604,21 @@ async function doSweep() {
                     fill.style.width = (step / total * 100) + '%';
                     try {
                         let txHash;
-                        if (swapInfo.type === 'lifi') {
+                        // For LI.FI cross-chain, re-fetch fresh quote right before execution (quotes expire in ~60s)
+                        if (swapInfo.type === 'lifi' && isCrossChain) {
+                            sweepLog(`${t.symbol}: refreshing cross-chain quote...`, 'info');
+                            const fromToken = t.mint || t.contractAddress;
+                            const rawAmount = toRawAmount(t.balance, t.decimals || 18);
+                            const fromChain = LIFI_CHAIN_MAP[t.chain];
+                            const dest = LIFI_DEST[destToken];
+                            const toAddress = dest.chain === 'SOL' ? (connectedSolAddr || userAddr) : userAddr;
+                            const params = new URLSearchParams({ fromChain, toChain: dest.chain, fromToken, toToken: dest.token, fromAmount: rawAmount, fromAddress: userAddr, toAddress, slippage: '0.05' });
+                            const quoteRes = await fetch(LIFI_API + '/quote?' + params.toString());
+                            const freshQuote = await quoteRes.json();
+                            if (!freshQuote.transactionRequest) throw new Error(freshQuote.message || 'No fresh route');
+                            const tx = freshQuote.transactionRequest;
+                            txHash = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: tx.to, data: tx.data, value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0', gas: tx.gasLimit || undefined }]});
+                        } else if (swapInfo.type === 'lifi') {
                             const tx = swapInfo.tx;
                             txHash = await eth.request({ method: 'eth_sendTransaction', params: [{ from: userAddr, to: tx.to, data: tx.data, value: tx.value ? ('0x' + BigInt(tx.value).toString(16)) : '0x0' }]});
                         } else if (swapInfo.type === 'uniswap') {
